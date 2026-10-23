@@ -72,7 +72,7 @@ st.markdown(
 )
 
 st.title("📚 Minha Biblioteca")
-st.caption("Sua estante pessoal: organize, descubra e acompanhe suas leituras com elegância.")
+st.success("✨ TESTE DE VERSÃO: O novo código está no ar!") # <-- Linha de teste
 
 OPENLIBRARY_SEARCH = "https://openlibrary.org/search.json"
 OPENLIBRARY_AUTHOR = "https://openlibrary.org/search/authors.json"
