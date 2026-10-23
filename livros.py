@@ -83,6 +83,18 @@ HEADERS = {"User-Agent": "MinhaEstantePessoal/1.0 (personal-library-app)"}
 # ============================================================
 cookie_manager = stx.CookieManager(key="cookie_manager")
 
+def get_supabase() -> Client | None:
+    try:
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets["SUPABASE_ANON_KEY"]
+        if not url or not key:
+            return None
+        return create_client(url, key)
+    except Exception:
+        return None
+
+supabase = get_supabase()
+
 def get_auth_supabase() -> Client | None:
     """Cria um cliente do Supabase injetando o token JWT ativo do usuário nas requisições."""
     try:
@@ -104,8 +116,6 @@ def get_auth_supabase() -> Client | None:
         return client
     except Exception:
         return None
-
-supabase = get_auth_supabase()
 
 def init_session():
     defaults = {
@@ -458,7 +468,7 @@ def get_work_description(work_key: str) -> str:
         pass
     return ""
 
-def to_book_record(result: dict[str, Any]) -> dict[str, Any]:
+def to_book_record(result: dict[str, Any], folder_id: str | None = None) -> dict[str, Any]:
     return {
         "title": normalize_text(result.get("title"), "Título desconhecido"),
         "authors": normalize_text(result.get("authors"), "Autor desconhecido"),
@@ -472,7 +482,7 @@ def to_book_record(result: dict[str, Any]) -> dict[str, Any]:
         "personal_note": "",
         "date_started": None,
         "date_finished": None,
-        "folder_id": None,
+        "folder_id": folder_id,
         "first_publish_year": result.get("first_publish_year"),
         "isbn": normalize_text(result.get("isbn"), ""),
         "publisher": normalize_text(result.get("publisher"), ""),
@@ -756,9 +766,13 @@ elif page == "Descobrir":
                 st.error("Ocorreu um imprevisto na busca. Tente novamente.")
 
     existing_keys = {b.get("work_key") for b in books}
+    
+    # Opções de estantes para o seletor rápido
+    folder_names_options = ["Sem estante"] + [f["name"] for f in folders]
+    
     for idx, result in enumerate(st.session_state.get("search_results", [])):
         with st.container(border=True):
-            c1, c2, c3 = st.columns([1, 5, 1])
+            c1, c2, c3 = st.columns([1, 4, 2])
             with c1:
                 if result.get("cover_url"):
                     st.image(result["cover_url"], width=80)
@@ -780,11 +794,17 @@ elif page == "Descobrir":
                 if result.get("work_key") in existing_keys:
                     st.caption("✨ Na estante")
                 else:
+                    chosen_shelf = st.selectbox(
+                        "Estante:", 
+                        folder_names_options, 
+                        key=f"shelf_select_disc_{idx}"
+                    )
                     if st.button("＋ Adicionar", key=f"add_result_{idx}", type="primary", use_container_width=True):
                         try:
-                            record = to_book_record(result)
+                            selected_fid = next((f["id"] for f in folders if f["name"] == chosen_shelf), None)
+                            record = to_book_record(result, folder_id=selected_fid)
                             save_book(record)
-                            st.session_state["notice"] = ("success", f"“{result['title']}” adicionado à estante!")
+                            st.session_state["notice"] = ("success", f"“{result['title']}” adicionado à coleção!")
                             st.rerun()
                         except Exception as exc:
                             st.error(f"Erro ao adicionar: {exc}")
@@ -819,9 +839,13 @@ elif page == "Autores":
         st.caption(f"{len(st.session_state.get('author_results', []))} resultado(s).")
     
     existing_keys = {b.get("work_key") for b in books}
+    
+    # Opções de estantes para o seletor rápido
+    folder_names_options = ["Sem estante"] + [f["name"] for f in folders]
+    
     for idx, result in enumerate(st.session_state.get("author_results", [])):
         with st.container(border=True):
-            c1, c2, c3 = st.columns([1, 5, 1])
+            c1, c2, c3 = st.columns([1, 4, 2])
             with c1:
                 if result.get("cover_url"):
                     st.image(result["cover_url"], width=70)
@@ -834,10 +858,17 @@ elif page == "Autores":
                 if result.get("work_key") in existing_keys:
                     st.caption("✨ Na estante")
                 else:
+                    chosen_shelf = st.selectbox(
+                        "Estante:", 
+                        folder_names_options, 
+                        key=f"shelf_select_auth_{idx}"
+                    )
                     if st.button("＋ Adicionar", key=f"add_author_{idx}", type="primary", use_container_width=True):
                         try:
-                            save_book(to_book_record(result))
-                            st.session_state["notice"] = ("success", f"“{result['title']}” adicionado à estante!")
+                            selected_fid = next((f["id"] for f in folders if f["name"] == chosen_shelf), None)
+                            record = to_book_record(result, folder_id=selected_fid)
+                            save_book(record)
+                            st.session_state["notice"] = ("success", f"“{result['title']}” adicionado à coleção!")
                             st.rerun()
                         except Exception as exc:
                             st.error(f"Erro ao adicionar: {exc}")
