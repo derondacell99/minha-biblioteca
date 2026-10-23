@@ -7,10 +7,10 @@ import streamlit as st
 from supabase import create_client, Client
 
 # ============================================================
-# CONFIGURAÇÃO E ESTÉTICA AVANÇADA
+# CONFIGURAÇÃO E PALETA CREME & LILÁS
 # ============================================================
 st.set_page_config(
-    page_title="Minha Biblioteca",
+    page_title="Minha Estante",
     page_icon="📚",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -20,47 +20,46 @@ st.markdown(
     """
     <style>
     :root {
-        --cream: #F7F3E8;
-        --paper: #FFFCF4;
-        --olive: #65734A;
-        --olive-dark: #465336;
-        --brown: #70543E;
-        --ink: #302D26;
+        --cream-bg: #FFF1E6;
+        --paper-bg: #FFFFFF;
+        --lilac-accent: #CDDAFD;
+        --soft-lavender: #DFE7FD;
+        --soft-pink: #FAD2E1;
+        --peach-light: #FDE2E4;
+        --sage: #E2ECE9;
+        --text-dark: #302D26;
         --muted: #777366;
-        --border-color: #E2DBD0;
+        --border-color: #DFE7FD;
     }
-    .stApp { background: var(--cream); color: var(--ink); }
-    [data-testid="stSidebar"] { background: #EFEBD9; border-right: 1px solid var(--border-color); }
-    h1, h2, h3 { color: var(--olive-dark); font-family: sans-serif; }
+    .stApp { background-color: var(--cream-bg); color: var(--text-dark); }
+    [data-testid="stSidebar"] { background-color: #F0EFEB; border-right: 1px solid var(--border-color); }
+    h1, h2, h3 { color: var(--text-dark); font-family: sans-serif; }
     
-    /* Cartões / Containers elegantes */
+    /* Cartões / Containers elegantes com toque lilás/creme */
     div[data-testid="stVerticalBlockBorderWrapper"] {
-        background: var(--paper);
+        background-color: var(--paper-bg);
         border: 1px solid var(--border-color);
         border-radius: 12px;
-        box-shadow: 0 2px 8px rgba(48, 45, 38, 0.04);
+        box-shadow: 0 2px 8px rgba(205, 218, 253, 0.25);
         transition: transform 0.2s ease, box-shadow 0.2s ease;
     }
     div[data-testid="stVerticalBlockBorderWrapper"]:hover {
-        box-shadow: 0 4px 14px rgba(48, 45, 38, 0.08);
+        box-shadow: 0 4px 14px rgba(205, 218, 253, 0.4);
     }
-    
-    .book-title { color: var(--olive-dark); font-size: 1.05rem; font-weight: 700; }
-    .small-muted { color: var(--muted); font-size: .88rem; }
     
     /* Botões personalizados */
     div.stButton > button[kind="primary"] {
-        background-color: var(--olive);
-        border-color: var(--olive);
-        color: white;
+        background-color: var(--lilac-accent);
+        border-color: var(--lilac-accent);
+        color: var(--text-dark);
         border-radius: 8px;
-        font-weight: 500;
+        font-weight: 600;
         transition: background-color 0.2s;
     }
     div.stButton > button[kind="primary"]:hover {
-        background-color: var(--olive-dark);
-        border-color: var(--olive-dark);
-        color: white;
+        background-color: var(--soft-lavender);
+        border-color: var(--soft-lavender);
+        color: var(--text-dark);
     }
     div.stButton > button[kind="secondary"] {
         border-radius: 8px;
@@ -70,9 +69,6 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
-st.title("📚 Minha Biblioteca")
-st.success("✨ TESTE DE VERSÃO: O novo código está no ar!") # <-- Linha de teste
 
 OPENLIBRARY_SEARCH = "https://openlibrary.org/search.json"
 OPENLIBRARY_AUTHOR = "https://openlibrary.org/search/authors.json"
@@ -103,6 +99,7 @@ def init_session():
         "author_results": [],
         "selected_book": None,
         "notice": None,
+        "page": "Início",
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -110,7 +107,6 @@ def init_session():
 
 init_session()
 
-# Restaura a sessão para manter estabilidade no RLS
 if supabase and st.session_state.get("access_token") and st.session_state.get("refresh_token"):
     try:
         supabase.auth.set_session(
@@ -145,6 +141,7 @@ def sign_out():
 # AUTENTICAÇÃO
 # ============================================================
 def auth_screen():
+    st.title("📚 Minha Estante")
     st.subheader("Sua biblioteca privada")
     st.write("Entre na sua conta ou crie uma conta para sincronizar seus livros com segurança.")
     login_tab, signup_tab = st.tabs(["Entrar", "Criar conta"])
@@ -198,7 +195,7 @@ def auth_screen():
                     st.error(f"Não foi possível criar a conta: {exc}")
 
 # ============================================================
-# ACESSO A DADOS (BOOKS & FOLDERS)
+# ACESSO A DADOS
 # ============================================================
 def user_id() -> str:
     return str(st.session_state["user"].id)
@@ -370,7 +367,7 @@ def to_book_record(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 # ============================================================
-# AUTH GATE & SIDEBAR
+# AUTH GATE & SIDEBAR (Segmented Control)
 # ============================================================
 if supabase is None:
     st.error("Falta configurar a conexão com o Supabase nos secrets.")
@@ -381,12 +378,29 @@ if st.session_state["user"] is None:
     st.stop()
 
 with st.sidebar:
-    st.markdown("## 🌿 Minha estante")
+    st.markdown("## 🌸 Minha Estante")
     st.caption(st.session_state.get("auth_email", "Conta conectada"))
-    page = st.radio(
+    st.divider()
+    
+    # Navegação com Segmented Control
+    nav_options = ["Início", "Coleção", "Descobrir", "Autores", "Pastas"]
+    current_page = st.session_state.get("page", "Início")
+    if current_page not in nav_options:
+        current_page = "Início"
+        
+    selected_page = st.segmented_control(
         "Navegação",
-        ["Visão geral", "Minha coleção", "Descobrir livros", "Buscar por autor", "Pastas"],
+        nav_options,
+        default=current_page,
+        key="nav_segmented_control",
+        label_visibility="collapsed"
     )
+    
+    if selected_page:
+        st.session_state["page"] = selected_page
+        
+    page = st.session_state.get("page", "Início")
+    
     st.divider()
     if st.button("Sair da conta", use_container_width=True):
         sign_out()
@@ -404,55 +418,62 @@ except Exception as exc:
 folder_map = {str(f["id"]): f["name"] for f in folders}
 
 # ============================================================
-# 1. VISÃO GERAL (DASHBOARD)
+# 1. INÍCIO (Meus livros, lendo agora, adicionados recentemente)
 # ============================================================
-if page == "Visão geral":
-    st.header("Sua biblioteca, no seu ritmo")
+if page == "Início":
+    st.title("📚 Minha Estante")
+    st.caption("Seus livros, leituras atuais e descobertas recentes.")
+    
     total = len(books)
     read_count = sum(1 for b in books if b.get("status") == "Lido")
     reading_count = sum(1 for b in books if b.get("status") == "Lendo")
     wishlist_count = sum(1 for b in books if b.get("status") == "Quero ler")
     
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Livros na estante", total)
+    c1.metric("Total na estante", total)
     c2.metric("Lidos", read_count)
-    c3.metric("Lendo", reading_count)
+    c3.metric("Lendo agora", reading_count)
     c4.metric("Quero ler", wishlist_count)
 
     st.divider()
-    st.subheader("Continue de onde parou")
+    
+    # Livros que está lendo
+    st.subheader("📖 Lendo no momento")
     in_progress = [b for b in books if b.get("status") == "Lendo"]
     if not in_progress:
         st.info("Você ainda não marcou nenhum livro como “Lendo”.")
     else:
-        cols = st.columns(4)
-        for idx, book in enumerate(in_progress[:8]):
-            with cols[idx % 4]:
+        cols = st.columns(5)
+        for idx, book in enumerate(in_progress[:5]):
+            with cols[idx % 5]:
                 with st.container(border=True):
                     if book.get("cover_url"):
-                        st.image(book["cover_url"], width=105)
-                    st.markdown(f"**{book['title']}**")
+                        st.image(book["cover_url"], width=85)
+                    else:
+                        st.caption("📖 Sem capa")
+                    st.markdown(f"**{book.get('title', 'Sem título')}**")
                     st.caption(book.get("authors", "Autor desconhecido"))
 
-    st.subheader("Adicionados recentemente")
+    st.subheader("✨ Adicionados recentemente")
     if not books:
-        st.info("Sua estante está vazia. Abra “Descobrir livros” para adicionar seu primeiro título.")
+        st.info("Sua estante está vazia. Vá até a aba “Descobrir” para adicionar seu primeiro título.")
     else:
-        for book in books[:5]:
-            with st.container(border=True):
-                col1, col2 = st.columns([1, 8])
-                with col1:
+        cols_recent = st.columns(5)
+        for idx, book in enumerate(books[:5]):
+            with cols_recent[idx % 5]:
+                with st.container(border=True):
                     if book.get("cover_url"):
-                        st.image(book["cover_url"], width=65)
-                with col2:
-                    st.markdown(f"**{book['title']}**")
-                    st.caption(f"{book.get('authors', 'Autor desconhecido')} · {book.get('status', 'Quero ler')}")
+                        st.image(book["cover_url"], width=85)
+                    else:
+                        st.caption("📖 Sem capa")
+                    st.markdown(f"**{book.get('title', 'Sem título')}**")
+                    st.caption(book.get("authors", "Autor desconhecido"))
 
 # ============================================================
-# 2. MINHA COLEÇÃO
+# 2. COLEÇÃO (Cartões menores, grade com 6 colunas, expandir/minimizar detalhes)
 # ============================================================
-elif page == "Minha coleção":
-    st.header("Minha coleção")
+elif page == "Coleção":
+    st.title("📖 Minha Coleção")
     st.caption(f"{len(books)} livro(s) na sua biblioteca")
 
     all_genres = sorted({
@@ -462,7 +483,7 @@ elif page == "Minha coleção":
     all_authors = sorted({b.get("authors", "") for b in books if b.get("authors")})
     statuses = ["Quero ler", "Lendo", "Lido", "Abandonado"]
 
-    with st.expander("🔎 Filtrar e ordenar", expanded=True):
+    with st.expander("🔎 Filtrar e ordenar", expanded=False):
         f1, f2, f3 = st.columns(3)
         with f1:
             query = st.text_input("Título, autor ou ISBN", key="collection_query")
@@ -503,12 +524,13 @@ elif page == "Minha coleção":
     if not filtered:
         st.info("Nenhum livro corresponde aos filtros selecionados.")
     else:
-        cols = st.columns(5)
+        # Grade compacta com 6 colunas para cartões menores
+        cols = st.columns(6)
         for idx, book in enumerate(filtered):
-            with cols[idx % 5]:
+            with cols[idx % 6]:
                 with st.container(border=True):
                     if book.get("cover_url"):
-                        st.image(book["cover_url"], width=115)
+                        st.image(book["cover_url"], width=85)
                     else:
                         st.caption("📖 Sem capa")
                     st.markdown(f"**{book.get('title', 'Sem título')}**")
@@ -516,8 +538,9 @@ elif page == "Minha coleção":
                     st.caption(f"Status: {book.get('status', 'Quero ler')}")
                     if book.get("rating"):
                         st.caption("★" * int(book["rating"]))
+                    
                     book_id = str(book["id"])
-                    with st.expander("Detalhes / editar"):
+                    with st.expander("⚙️ Detalhes"):
                         with st.form(f"edit_{book_id}"):
                             status = st.selectbox(
                                 "Status",
@@ -527,7 +550,7 @@ elif page == "Minha coleção":
                                 key=f"status_{book_id}",
                             )
                             rating = st.select_slider(
-                                "Sua avaliação",
+                                "Avaliação",
                                 options=[0, 1, 2, 3, 4, 5],
                                 value=int(book.get("rating") or 0),
                                 format_func=lambda x: "Sem nota" if x == 0 else "★" * x,
@@ -538,58 +561,46 @@ elif page == "Minha coleção":
                             current_folder = str(book.get("folder_id") or "")
                             folder_index = folder_ids.index(current_folder) if current_folder in folder_ids else 0
                             chosen_folder_name = st.selectbox(
-                                "Pasta personalizada",
+                                "Pasta",
                                 folder_names,
                                 index=folder_index,
                                 key=f"folder_{book_id}",
                             )
-                            country = st.text_input("País (autor ou edição)", value=book.get("country") or "", key=f"country_{book_id}")
-                            personal_note = st.text_area("Sua nota", value=book.get("personal_note") or "", key=f"note_{book_id}")
-                            started = st.date_input(
-                                "Data de início",
-                                value=date.fromisoformat(book["date_started"]) if book.get("date_started") else None,
-                                key=f"started_{book_id}",
-                            )
-                            finished = st.date_input(
-                                "Data de conclusão",
-                                value=date.fromisoformat(book["date_finished"]) if book.get("date_finished") else None,
-                                key=f"finished_{book_id}",
-                            )
-                            save = st.form_submit_button("Salvar alterações", type="primary", use_container_width=True)
+                            personal_note = st.text_area("Nota pessoal", value=book.get("personal_note") or "", key=f"note_{book_id}")
+                            
+                            save = st.form_submit_button("Atualizar", type="primary", use_container_width=True)
                         if save:
                             try:
                                 save_book({
                                     "status": status,
                                     "rating": rating,
                                     "folder_id": next((f["id"] for f in folders if f["name"] == chosen_folder_name), None),
-                                    "country": country.strip(),
                                     "personal_note": personal_note.strip(),
-                                    "date_started": started.isoformat() if started else None,
-                                    "date_finished": finished.isoformat() if finished else None,
                                 }, existing_id=book_id)
                                 st.session_state["notice"] = ("success", "Livro atualizado.")
                                 st.rerun()
                             except Exception as exc:
-                                st.error(f"Não foi possível salvar: {exc}")
-                        if st.button("Excluir livro", key=f"delete_{book_id}", use_container_width=True):
+                                st.error(f"Erro ao salvar: {exc}")
+                        
+                        if st.button("🗑️ Excluir", key=f"delete_{book_id}", use_container_width=True):
                             st.session_state[f"confirm_delete_{book_id}"] = True
                         if st.session_state.get(f"confirm_delete_{book_id}"):
-                            st.warning("Tem certeza? Esta ação não pode ser desfeita.")
+                            st.warning("Excluir este livro?")
                             yes, no = st.columns(2)
-                            if yes.button("Sim, excluir", key=f"yes_delete_{book_id}"):
+                            if yes.button("Sim", key=f"yes_delete_{book_id}"):
                                 delete_book(book_id)
                                 st.session_state["notice"] = ("success", "Livro excluído.")
                                 st.rerun()
-                            if no.button("Cancelar", key=f"no_delete_{book_id}"):
+                            if no.button("Não", key=f"no_delete_{book_id}"):
                                 st.session_state[f"confirm_delete_{book_id}"] = False
                                 st.rerun()
 
 # ============================================================
 # 3. DESCOBRIR LIVROS
 # ============================================================
-elif page == "Descobrir livros":
-    st.header("Descobrir livros")
-    st.write("Pesquise por título, autor ou assunto no catálogo da Open Library.")
+elif page == "Descobrir":
+    st.title("🔍 Descobrir Livros")
+    st.write("Pesquise no catálogo global da Open Library e adicione direto à sua estante.")
     with st.form("search_books_form"):
         term = st.text_input("O que você quer encontrar?", placeholder="Ex.: Jane Eyre, Machado de Assis, fantasia")
         limit = st.selectbox("Quantidade de resultados", [10, 20, 40], index=1)
@@ -606,12 +617,13 @@ elif page == "Descobrir livros":
             except requests.RequestException:
                 st.error("Não consegui acessar a Open Library agora. Tente novamente.")
 
-    for idx, result in enumerate(st.session_state["search_results"]):
+    existing_keys = {b.get("work_key") for b in books}
+    for idx, result in enumerate(st.session_state.get("search_results", [])):
         with st.container(border=True):
-            c1, c2, c3 = st.columns([1, 4, 1])
+            c1, c2, c3 = st.columns([1, 5, 1])
             with c1:
                 if result.get("cover_url"):
-                    st.image(result["cover_url"], width=95)
+                    st.image(result["cover_url"], width=80)
                 else:
                     st.caption("Sem capa")
             with c2:
@@ -619,33 +631,32 @@ elif page == "Descobrir livros":
                 st.caption(result["authors"])
                 meta = []
                 if result.get("first_publish_year"):
-                    meta.append(f"Primeira publicação: {result['first_publish_year']}")
-                if result.get("edition_count"):
-                    meta.append(f"{result['edition_count']} edição(ões)")
+                    meta.append(f"Ano: {result['first_publish_year']}")
                 if result.get("publisher"):
                     meta.append(f"Editora: {result['publisher']}")
                 if meta:
                     st.caption(" · ".join(meta))
-                if result.get("genres"):
-                    st.caption("Gêneros/assuntos: " + ", ".join(result["genres"][:5]))
             with c3:
-                with st.form(f"add_result_{idx}"):
-                    add = st.form_submit_button("＋ Adicionar", type="primary", use_container_width=True)
-                if add:
-                    try:
-                        record = to_book_record(result)
-                        save_book(record)
-                        st.session_state["notice"] = ("success", f"“{result['title']}” foi adicionado à sua biblioteca.")
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(f"Não foi possível adicionar o livro: {exc}")
+                if result.get("work_key") in existing_keys:
+                    st.caption("✓ Na estante")
+                else:
+                    with st.form(f"add_result_{idx}"):
+                        add = st.form_submit_button("＋ Adicionar", type="primary", use_container_width=True)
+                    if add:
+                        try:
+                            record = to_book_record(result)
+                            save_book(record)
+                            st.session_state["notice"] = ("success", f"“{result['title']}” adicionado à estante!")
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(f"Erro ao adicionar: {exc}")
 
 # ============================================================
 # 4. BUSCAR POR AUTOR
 # ============================================================
-elif page == "Buscar por autor":
-    st.header("Obras de um autor")
-    st.write("Busque um autor para listar as obras catalogadas na Open Library.")
+elif page == "Autores":
+    st.title("✍️ Buscar por Autor")
+    st.write("Explore obras catalogadas de um autor específico.")
     with st.form("author_search_form"):
         author_query = st.text_input("Nome do autor", placeholder="Ex.: Charlotte Brontë")
         author_limit = st.selectbox("Máximo de obras", [25, 50, 100], index=2)
@@ -662,43 +673,47 @@ elif page == "Buscar por autor":
                 if not results:
                     st.info("Não encontrei obras para esse autor.")
             except requests.RequestException:
-                st.error("Não consegui acessar a Open Library agora. Tente novamente.")
+                st.error("Não consegui acessar a Open Library. Tente novamente.")
+    
     resolved = st.session_state.get("resolved_author")
     if resolved:
-        st.subheader(f"Obras encontradas: {resolved}")
-        st.caption(f"{len(st.session_state['author_results'])} resultado(s).")
-    results = st.session_state["author_results"]
-    if results:
-        for idx, result in enumerate(results):
-            with st.container(border=True):
-                c1, c2, c3 = st.columns([1, 5, 1])
-                with c1:
-                    if result.get("cover_url"):
-                        st.image(result["cover_url"], width=75)
-                    else:
-                        st.caption("Sem capa")
-                with c2:
-                    st.markdown(f"**{result['title']}**")
-                    st.caption(result["authors"])
-                with c3:
+        st.subheader(f"Obras de: {resolved}")
+        st.caption(f"{len(st.session_state.get('author_results', []))} resultado(s).")
+    
+    existing_keys = {b.get("work_key") for b in books}
+    for idx, result in enumerate(st.session_state.get("author_results", [])):
+        with st.container(border=True):
+            c1, c2, c3 = st.columns([1, 5, 1])
+            with c1:
+                if result.get("cover_url"):
+                    st.image(result["cover_url"], width=70)
+                else:
+                    st.caption("Sem capa")
+            with c2:
+                st.markdown(f"**{result['title']}**")
+                st.caption(result["authors"])
+            with c3:
+                if result.get("work_key") in existing_keys:
+                    st.caption("✓ Na estante")
+                else:
                     with st.form(f"add_author_{idx}"):
                         add = st.form_submit_button("＋ Adicionar", type="primary", use_container_width=True)
                     if add:
                         try:
                             save_book(to_book_record(result))
-                            st.session_state["notice"] = ("success", f"“{result['title']}” foi adicionado à sua biblioteca.")
+                            st.session_state["notice"] = ("success", f"“{result['title']}” adicionado à estante!")
                             st.rerun()
                         except Exception as exc:
-                            st.error(f"Não foi possível adicionar o livro: {exc}")
+                            st.error(f"Erro ao adicionar: {exc}")
 
 # ============================================================
 # 5. PASTAS
 # ============================================================
 elif page == "Pastas":
-    st.header("Pastas personalizadas")
-    st.write("Organize sua coleção em estantes temáticas. Excluir uma pasta mantém seus livros seguros.")
+    st.title("📁 Pastas Personalizadas")
+    st.write("Organize sua coleção em estantes temáticas.")
     with st.form("new_folder_form"):
-        new_name = st.text_input("Nome da nova pasta", placeholder="Ex.: Clássicos da Literatura")
+        new_name = st.text_input("Nome da nova pasta", placeholder="Ex.: Clássicos, Ficção Científica")
         create = st.form_submit_button("Criar pasta", type="primary")
     if create:
         if not new_name.strip():
@@ -711,7 +726,7 @@ elif page == "Pastas":
                 st.session_state["notice"] = ("success", "Pasta criada.")
                 st.rerun()
             except Exception as exc:
-                st.error(f"Não foi possível criar a pasta: {exc}")
+                st.error(f"Erro ao criar pasta: {exc}")
 
     if folders:
         st.subheader("Suas pastas")
@@ -738,7 +753,7 @@ elif page == "Pastas":
                                 st.session_state["notice"] = ("success", "Pasta renomeada.")
                                 st.rerun()
                             except Exception as exc:
-                                st.error(f"Não foi possível renomear: {exc}")
+                                st.error(f"Erro ao renomear: {exc}")
                 with col3:
                     if st.button("Excluir", key=f"del_folder_{fid}"):
                         st.session_state[f"confirm_folder_{fid}"] = True
@@ -747,9 +762,9 @@ elif page == "Pastas":
                         if st.button("Confirmar", key=f"confirm_del_folder_{fid}"):
                             try:
                                 delete_folder(fid)
-                                st.session_state["notice"] = ("success", "Pasta excluída. Os livros foram preservados.")
+                                st.session_state["notice"] = ("success", "Pasta excluída.")
                                 st.rerun()
                             except Exception as exc:
-                                st.error(f"Não foi possível excluir: {exc}")
+                                st.error(f"Erro ao excluir: {exc}")
     else:
         st.info("Você ainda não criou nenhuma pasta.")
