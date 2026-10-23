@@ -1,11 +1,9 @@
 import os
-import base64
-from datetime import date, datetime, timedelta
+from datetime import date
 from typing import Any
 
 import requests
 import streamlit as st
-from streamlit_cookies_controller import CookieController
 from supabase import create_client, Client
 
 # ============================================================
@@ -76,35 +74,34 @@ def get_supabase() -> Client | None:
     except Exception:
         return None
 
-
 supabase = get_supabase()
-
 
 def init_session():
     defaults = {
         "user": None,
+        "access_token": None,
+        "refresh_token": None,
         "auth_email": "",
         "search_results": [],
         "author_results": [],
         "selected_book": None,
         "notice": None,
-        "page": "HOME",
-        "remember_login": False,
-        "cookie_controller_ready": False,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
 
-
 init_session()
 
-# Cookie de sessão opcional para manter a conta conectada neste navegador.
-try:
-    cookies = CookieController(key="biblioteca_cookies")
-except Exception:
-    cookies = None
-
+# Restaura a sessão do Supabase após reloads do Streamlit
+if supabase and st.session_state.get("access_token") and st.session_state.get("refresh_token"):
+    try:
+        supabase.auth.set_session(
+            st.session_state["access_token"],
+            st.session_state["refresh_token"]
+        )
+    except Exception:
+        pass
 
 def show_notice():
     notice = st.session_state.get("notice")
@@ -118,19 +115,14 @@ def show_notice():
             st.info(message)
         st.session_state["notice"] = None
 
-
 def sign_out():
     st.session_state["user"] = None
+    st.session_state["access_token"] = None
+    st.session_state["refresh_token"] = None
     st.session_state["search_results"] = []
     st.session_state["author_results"] = []
     st.session_state["selected_book"] = None
-    try:
-        if cookies:
-            cookies.remove("biblioteca_refresh_token")
-    except Exception:
-        pass
     st.rerun()
-
 
 # ============================================================
 # AUTHENTICATION
@@ -144,7 +136,6 @@ def auth_screen():
         with st.form("login_form"):
             email = st.text_input("E-mail", key="login_email")
             password = st.text_input("Senha", type="password", key="login_password")
-            remember = st.checkbox("Continuar conectado até eu sair da conta", value=True, key="remember_login_choice")
             submitted = st.form_submit_button("Entrar", type="primary", use_container_width=True)
         if submitted:
             if not email.strip() or not password:
@@ -155,13 +146,9 @@ def auth_screen():
                         {"email": email.strip(), "password": password}
                     )
                     st.session_state["user"] = result.user
+                    st.session_state["access_token"] = result.session.access_token
+                    st.session_state["refresh_token"] = result.session.refresh_token
                     st.session_state["auth_email"] = email.strip()
-                    st.session_state["remember_login"] = remember
-                    if remember and cookies:
-                        try:
-                            cookies.set("biblioteca_refresh_token", result.session.refresh_token, max_age=60*60*24*30)
-                        except Exception:
-                            st.warning("Não consegui gravar a preferência de sessão neste navegador. Você pode continuar usando normalmente.")
                     st.rerun()
                 except Exception:
                     st.error("Não foi possível entrar. Confira os dados e, se necessário, confirme seu e-mail.")
@@ -184,6 +171,8 @@ def auth_screen():
                     )
                     if result.session:
                         st.session_state["user"] = result.user
+                        st.session_state["access_token"] = result.session.access_token
+                        st.session_state["refresh_token"] = result.session.refresh_token
                         st.session_state["auth_email"] = email_new.strip()
                         st.rerun()
                     else:
@@ -191,13 +180,11 @@ def auth_screen():
                 except Exception as exc:
                     st.error(f"Não foi possível criar a conta: {exc}")
 
-
 # ============================================================
 # DATA ACCESS
 # ============================================================
 def user_id() -> str:
     return str(st.session_state["user"].id)
-
 
 def load_books() -> list[dict[str, Any]]:
     result = (
@@ -209,7 +196,6 @@ def load_books() -> list[dict[str, Any]]:
     )
     return result.data or []
 
-
 def load_folders() -> list[dict[str, Any]]:
     result = (
         supabase.table("folders")
@@ -220,7 +206,6 @@ def load_folders() -> list[dict[str, Any]]:
     )
     return result.data or []
 
-
 def save_book(book: dict[str, Any], existing_id: str | None = None):
     payload = {**book, "user_id": user_id()}
     if existing_id:
@@ -228,24 +213,18 @@ def save_book(book: dict[str, Any], existing_id: str | None = None):
     else:
         supabase.table("books").insert(payload).execute()
 
-
 def delete_book(book_id: str):
     supabase.table("books").delete().eq("id", book_id).eq("user_id", user_id()).execute()
-
 
 def create_folder(name: str):
     supabase.table("folders").insert({"name": name.strip(), "user_id": user_id()}).execute()
 
-
 def rename_folder(folder_id: str, name: str):
     supabase.table("folders").update({"name": name.strip()}).eq("id", folder_id).eq("user_id", user_id()).execute()
 
-
 def delete_folder(folder_id: str):
-    # Livros não são apagados; ficam sem pasta.
     supabase.table("books").update({"folder_id": None}).eq("folder_id", folder_id).eq("user_id", user_id()).execute()
     supabase.table("folders").delete().eq("id", folder_id).eq("user_id", user_id()).execute()
-
 
 # ============================================================
 # OPEN LIBRARY SEARCH
@@ -256,7 +235,6 @@ def normalize_text(value: Any, fallback: str = "") -> str:
     if value is None:
         return fallback
     return str(value)
-
 
 def search_books(term: str, limit: int = 20) -> list[dict[str, Any]]:
     response = requests.get(
@@ -289,7 +267,6 @@ def search_books(term: str, limit: int = 20) -> list[dict[str, Any]]:
         })
     return results
 
-
 def search_author_works(author_name: str, limit: int = 100) -> tuple[list[dict[str, Any]], str | None]:
     response = requests.get(
         OPENLIBRARY_AUTHOR,
@@ -302,7 +279,6 @@ def search_author_works(author_name: str, limit: int = 100) -> tuple[list[dict[s
     if not docs:
         return [], None
 
-    # Prioriza correspondência de nome mais próxima, mas permite escolher outro autor.
     chosen = next(
         (d for d in docs if d.get("name", "").casefold() == author_name.casefold()),
         docs[0],
@@ -337,7 +313,6 @@ def search_author_works(author_name: str, limit: int = 100) -> tuple[list[dict[s
         })
     return results, chosen.get("name", author_name)
 
-
 def get_work_description(work_key: str) -> str:
     if not work_key:
         return ""
@@ -356,7 +331,6 @@ def get_work_description(work_key: str) -> str:
     except requests.RequestException:
         pass
     return ""
-
 
 def to_book_record(result: dict[str, Any]) -> dict[str, Any]:
     return {
@@ -378,34 +352,6 @@ def to_book_record(result: dict[str, Any]) -> dict[str, Any]:
         "publisher": result.get("publisher", ""),
     }
 
-
-# ============================================================
-# PERFIL DO USUÁRIO
-# ============================================================
-def load_profile() -> dict[str, Any]:
-    result = supabase.table("profiles").select("*").eq("user_id", user_id()).limit(1).execute()
-    if result.data:
-        return result.data[0]
-    default_name = st.session_state.get("auth_email", "Leitor").split("@")[0]
-    supabase.table("profiles").upsert({"user_id": user_id(), "username": default_name, "avatar_data": ""}).execute()
-    return {"username": default_name, "avatar_data": ""}
-
-
-def save_profile(username: str, avatar_data: str | None = None):
-    payload = {"user_id": user_id(), "username": username.strip()}
-    if avatar_data is not None:
-        payload["avatar_data"] = avatar_data
-    supabase.table("profiles").upsert(payload, on_conflict="user_id").execute()
-
-
-def avatar_to_data_url(uploaded_file) -> str:
-    raw = uploaded_file.getvalue()
-    if len(raw) > 2_000_000:
-        raise ValueError("Escolha uma imagem de até 2 MB.")
-    mime = uploaded_file.type if uploaded_file.type in ("image/png", "image/jpeg", "image/webp") else "image/jpeg"
-    return f"data:{mime};base64," + base64.b64encode(raw).decode("utf-8")
-
-
 # ============================================================
 # AUTH GATE
 # ============================================================
@@ -416,7 +362,7 @@ if supabase is None:
         Crie `.streamlit/secrets.toml` na pasta do projeto com:
 
         ```toml
-        SUPABASE_URL = "https://SEU-PROJETO.supabase.co"
+        SUPABASE_URL = "[https://SEU-PROJETO.supabase.co](https://SEU-PROJETO.supabase.co)"
         SUPABASE_ANON_KEY = "SUA_CHAVE_ANON_PUBLIC"
         ```
 
@@ -426,44 +372,17 @@ if supabase is None:
     st.stop()
 
 if st.session_state["user"] is None:
-    # Tenta restaurar a sessão salva, quando a opção foi marcada.
-    try:
-        if cookies:
-            refresh_token = cookies.get("biblioteca_refresh_token")
-            if refresh_token:
-                refreshed = supabase.auth.refresh_session(refresh_token)
-                if refreshed and refreshed.user and refreshed.session:
-                    st.session_state["user"] = refreshed.user
-                    st.session_state["auth_email"] = getattr(refreshed.user, "email", "") or ""
-                    try:
-                        cookies.set("biblioteca_refresh_token", refreshed.session.refresh_token, max_age=60*60*24*30)
-                    except Exception:
-                        pass
-                    st.rerun()
-    except Exception:
-        pass
     auth_screen()
     st.stop()
 
 # Sidebar
 with st.sidebar:
-    try:
-        sidebar_profile = load_profile()
-        if sidebar_profile.get("avatar_data"):
-            st.image(sidebar_profile["avatar_data"], width=90)
-        st.markdown(f"## 🌿 {sidebar_profile.get('username') or 'Minha estante'}")
-    except Exception:
-        st.markdown("## 🌿 Minha estante")
+    st.markdown("## 🌿 Minha estante")
     st.caption(st.session_state.get("auth_email", "Conta conectada"))
-    st.markdown("### Navegação")
-    nav_items = ["HOME", "Visão geral", "Minha coleção", "Descobrir livros", "Buscar por autor", "ESTANTES", "Meu perfil"]
-    for nav_item in nav_items:
-        if st.button(("▸ " if st.session_state.get("page") == nav_item else "› ") + nav_item,
-                     key="nav_" + nav_item, use_container_width=True,
-                     type="primary" if st.session_state.get("page") == nav_item else "secondary"):
-            st.session_state["page"] = nav_item
-            st.rerun()
-    page = st.session_state.get("page", "HOME")
+    page = st.radio(
+        "Navegação",
+        ["Visão geral", "Minha coleção", "Descobrir livros", "Buscar por autor", "Pastas"],
+    )
     if st.button("Sair da conta", use_container_width=True):
         sign_out()
 
@@ -482,65 +401,7 @@ folder_map = {str(f["id"]): f["name"] for f in folders}
 # ============================================================
 # DASHBOARD
 # ============================================================
-if page == "HOME":
-    st.header("HOME · Encontre seu próximo livro")
-    st.write("Pesquise na base da Open Library e na sua biblioteca pessoal em um só lugar.")
-    with st.form("home_global_search"):
-        home_term = st.text_input("Pesquisar livros", placeholder="Título, autor, assunto ou ISBN")
-        home_limit = st.selectbox("Resultados do catálogo", [10, 20, 40], index=1)
-        home_submit = st.form_submit_button("Pesquisar", type="primary")
-    if home_submit:
-        st.session_state["home_query"] = home_term.strip()
-        st.session_state["home_catalog_results"] = []
-        if home_term.strip():
-            try:
-                st.session_state["home_catalog_results"] = search_books(home_term.strip(), home_limit)
-            except requests.RequestException:
-                st.error("Não consegui consultar o catálogo agora. Tente novamente.")
-        else:
-            st.warning("Digite o nome de um livro, autor ou assunto.")
-    home_query = st.session_state.get("home_query", "")
-    if home_query:
-        q = home_query.casefold()
-        personal_matches = [b for b in books if q in (b.get("title", "") + " " + b.get("authors", "") + " " + b.get("isbn", "")).casefold()]
-        st.subheader(f"Sua biblioteca · {len(personal_matches)} resultado(s)")
-        if not personal_matches:
-            st.caption("Nenhum livro correspondente na sua coleção pessoal.")
-        for b in personal_matches:
-            c1, c2 = st.columns([1, 7])
-            with c1:
-                if b.get("cover_url"): st.image(b["cover_url"], width=65)
-            with c2:
-                st.markdown(f"**{b.get('title', 'Sem título')}**")
-                st.caption(f"{b.get('authors', 'Autor desconhecido')} · {b.get('status', 'Quero ler')}")
-        st.divider()
-        st.subheader("Catálogo geral · Open Library")
-        existing_keys = {b.get("work_key") for b in books}
-        for idx, result in enumerate(st.session_state.get("home_catalog_results", [])):
-            with st.container(border=True):
-                c1, c2, c3 = st.columns([1, 5, 1])
-                with c1:
-                    if result.get("cover_url"): st.image(result["cover_url"], width=70)
-                with c2:
-                    st.markdown(f"**{result['title']}**")
-                    st.caption(result["authors"])
-                    if result.get("first_publish_year"): st.caption(f"Ano: {result['first_publish_year']}")
-                with c3:
-                    if result.get("work_key") in existing_keys:
-                        st.caption("Já está na sua estante")
-                    elif st.button("＋ Adicionar", key=f"home_add_{idx}", type="primary"):
-                        try:
-                            save_book(to_book_record(result))
-                            st.session_state["notice"] = ("success", f"“{result['title']}” foi adicionado à sua biblioteca.")
-                            st.rerun()
-                        except Exception as exc:
-                            st.error(f"Não foi possível adicionar: {exc}")
-    else:
-        st.subheader("Sua estante, agora")
-        st.metric("Livros pessoais", len(books))
-        st.caption("Use a busca acima para encontrar tanto os seus livros quanto novos títulos no catálogo.")
-
-elif page == "Visão geral":
+if page == "Visão geral":
     st.header("Sua biblioteca, no seu ritmo")
     total = len(books)
     read_count = sum(1 for b in books if b.get("status") == "Lido")
@@ -636,7 +497,6 @@ elif page == "Minha coleção":
     if not filtered:
         st.info("Nenhum livro corresponde aos filtros selecionados.")
     else:
-        # Smaller, consistent covers; each book has a compact card.
         cols = st.columns(5)
         for idx, book in enumerate(filtered):
             with cols[idx % 5]:
@@ -828,9 +688,9 @@ elif page == "Buscar por autor":
 # ============================================================
 # FOLDERS
 # ============================================================
-elif page == "ESTANTES":
-    st.header("ESTANTES")
-    st.write("Crie e organize suas estantes. Você pode adicionar, mover ou retirar livros de cada estante sem apagar o livro da biblioteca.")
+elif page == "Pastas":
+    st.header("Pastas personalizadas")
+    st.write("Crie suas próprias estantes. Excluir uma pasta não exclui os livros: eles voltam a ficar sem pasta.")
     with st.form("new_folder_form"):
         new_name = st.text_input("Nome da nova pasta", placeholder="Ex.: Literatura brasileira")
         create = st.form_submit_button("Criar pasta", type="primary")
@@ -887,61 +747,3 @@ elif page == "ESTANTES":
                                 st.error(f"Não foi possível excluir: {exc}")
     else:
         st.info("Você ainda não criou nenhuma pasta.")
-
-    # Organização direta dos livros dentro das estantes
-    if folders:
-        st.divider()
-        st.subheader("Organizar livros nas estantes")
-        shelf_options = {f["name"]: str(f["id"]) for f in folders}
-        selected_shelf_name = st.selectbox("Escolha uma estante para editar", list(shelf_options.keys()), key="manage_shelf")
-        selected_shelf_id = shelf_options[selected_shelf_name]
-        shelf_books = [b for b in books if str(b.get("folder_id") or "") == selected_shelf_id]
-        st.caption(f"{len(shelf_books)} livro(s) nesta estante")
-        for sb in shelf_books:
-            c1, c2, c3 = st.columns([1, 5, 2])
-            with c1:
-                if sb.get("cover_url"): st.image(sb["cover_url"], width=45)
-            with c2:
-                st.markdown(f"**{sb.get('title', 'Sem título')}**")
-                st.caption(sb.get("authors", "Autor desconhecido"))
-            with c3:
-                destination_names = ["Retirar desta estante"] + [f["name"] for f in folders if str(f["id"]) != selected_shelf_id]
-                destination_ids = [""] + [str(f["id"]) for f in folders if str(f["id"]) != selected_shelf_id]
-                with st.form(f"move_shelf_{sb['id']}"):
-                    dest_name = st.selectbox("Mover para", destination_names, key=f"dest_{sb['id']}")
-                    move = st.form_submit_button("Aplicar")
-                if move:
-                    dest_idx = destination_names.index(dest_name)
-                    try:
-                        save_book({"folder_id": destination_ids[dest_idx] or None}, existing_id=str(sb["id"]))
-                        st.session_state["notice"] = ("success", "Livro movido/retirado da estante.")
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(f"Não foi possível mover o livro: {exc}")
-
-    st.divider()
-    st.subheader("Categorias automáticas")
-    st.write("Os gêneros/assuntos vêm da Open Library. Você pode usá-los como filtros na página “Minha coleção”. A qualidade desses dados varia de livro para livro.")
-
-
-elif page == "Meu perfil":
-    st.header("Meu perfil")
-    profile = load_profile()
-    if profile.get("avatar_data"):
-        st.image(profile["avatar_data"], width=140)
-    with st.form("profile_form"):
-        username = st.text_input("Nome de usuário", value=profile.get("username") or "", max_chars=40)
-        avatar_file = st.file_uploader("Foto do perfil (PNG, JPG ou WEBP; até 2 MB)", type=["png", "jpg", "jpeg", "webp"])
-        remove_avatar = st.checkbox("Remover foto atual")
-        save_profile_btn = st.form_submit_button("Salvar perfil", type="primary")
-    if save_profile_btn:
-        if not username.strip():
-            st.warning("O nome de usuário não pode ficar vazio.")
-        else:
-            try:
-                avatar_data = "" if remove_avatar else (avatar_to_data_url(avatar_file) if avatar_file else None)
-                save_profile(username, avatar_data)
-                st.session_state["notice"] = ("success", "Perfil atualizado.")
-                st.rerun()
-            except Exception as exc:
-                st.error(f"Não foi possível salvar o perfil: {exc}")
