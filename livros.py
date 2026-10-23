@@ -440,12 +440,12 @@ def get_work_description(work_key: str) -> str:
 
 def to_book_record(result: dict[str, Any]) -> dict[str, Any]:
     return {
-        "title": result["title"],
-        "authors": result["authors"],
-        "work_key": result.get("work_key", ""),
-        "cover_url": result.get("cover_url", ""),
+        "title": normalize_text(result.get("title"), "Título desconhecido"),
+        "authors": normalize_text(result.get("authors"), "Autor desconhecido"),
+        "work_key": normalize_text(result.get("work_key"), ""),
+        "cover_url": normalize_text(result.get("cover_url"), ""),
         "description": get_work_description(result.get("work_key", "")),
-        "genres": result.get("genres", []),
+        "genres": result.get("genres", []) or [],
         "country": "",
         "status": "Quero ler",
         "rating": 0,
@@ -454,8 +454,8 @@ def to_book_record(result: dict[str, Any]) -> dict[str, Any]:
         "date_finished": None,
         "folder_id": None,
         "first_publish_year": result.get("first_publish_year"),
-        "isbn": result.get("isbn", ""),
-        "publisher": result.get("publisher", ""),
+        "isbn": normalize_text(result.get("isbn"), ""),
+        "publisher": normalize_text(result.get("publisher"), ""),
     }
 
 # ============================================================
