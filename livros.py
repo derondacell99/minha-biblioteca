@@ -34,7 +34,7 @@ st.markdown(
     [data-testid="stSidebar"] { background-color: #F8EDF8; border-right: 1px solid var(--border-color); }
     h1, h2, h3 { color: #5D3B62; font-family: sans-serif; }
     
-    /* Cartões / Containers fofos com sombra rosa/lilás */
+    /* Cartões / Containers */
     div[data-testid="stVerticalBlockBorderWrapper"] {
         background-color: var(--paper-bg);
         border: 1px solid var(--border-color);
@@ -53,7 +53,6 @@ st.markdown(
         color: #4A3E48;
         border-radius: 10px;
         font-weight: 600;
-        transition: background-color 0.2s;
     }
     div.stButton > button[kind="primary"]:hover {
         background-color: #FFC6FF;
@@ -101,7 +100,6 @@ def init_session():
         "auth_email": "",
         "search_results": [],
         "author_results": [],
-        "selected_book": None,
         "notice": None,
         "page": "Início",
     }
@@ -138,7 +136,6 @@ def sign_out():
     st.session_state["refresh_token"] = None
     st.session_state["search_results"] = []
     st.session_state["author_results"] = []
-    st.session_state["selected_book"] = None
     st.rerun()
 
 # ============================================================
@@ -472,7 +469,7 @@ if page == "Início":
                     st.caption(book.get("authors", "Autor desconhecido"))
 
 # ============================================================
-# 2. COLEÇÃO (Pesquisa visível e filtros)
+# 2. COLEÇÃO (Pesquisa funcional + Filtros)
 # ============================================================
 elif page == "Coleção":
     st.title("💖 Minha Coleção")
@@ -485,14 +482,8 @@ elif page == "Coleção":
     all_authors = sorted({b.get("authors", "") for b in books if b.get("authors")})
     statuses = ["Quero ler", "Lendo", "Lido", "Abandonado"]
 
-    # Barra de busca rápida visível
-    search_col, filter_col = st.columns([3, 1])
-    with search_col:
-        query = st.text_input("🔍 Pesquisar na sua coleção", placeholder="Buscar por título, autor ou ISBN...", key="collection_query")
-    
-    with filter_col:
-        st.write("") # Espaçamento
-        st.write("")
+    # Campo de Pesquisa Direta
+    query = st.text_input("🔍 Pesquisar por título, autor ou ISBN", value="", key="search_collection_input")
 
     with st.expander("⚙️ Filtros avançados e ordenação", expanded=False):
         f1, f2, f3 = st.columns(3)
@@ -510,7 +501,7 @@ elif page == "Coleção":
     filtered = []
     for b in books:
         b_genres = b.get("genres") or []
-        if query and query.casefold() not in " ".join([
+        if query.strip() and query.strip().casefold() not in " ".join([
             b.get("title", ""), b.get("authors", ""), b.get("isbn", "")
         ]).casefold():
             continue
@@ -532,7 +523,7 @@ elif page == "Coleção":
         filtered.sort(key=lambda b: b.get("first_publish_year") or 999999)
 
     if not filtered:
-        st.info("Nenhum livro corresponde à sua busca ou filtros.")
+        st.info("Nenhum livro encontrado.")
     else:
         for idx, book in enumerate(filtered):
             book_id = str(book["id"])
@@ -555,14 +546,14 @@ elif page == "Coleção":
                         st.caption("⭐ **Avaliação:** Sem nota")
                         
                     current_fid = str(book.get("folder_id") or "")
-                    folder_name = folder_map.get(current_fid, "Geral")
+                    folder_name = folder_map.get(current_fid, "Sem estante")
                     st.caption(f"📁 **Estante:** {folder_name}")
                     
                     if book.get("personal_note"):
                         st.caption(f"💬 *Nota:* {book.get('personal_note')}")
                         
                 with c_edit:
-                    with st.expander("✏️ Editar Livro"):
+                    with st.expander("✏️ Editar"):
                         with st.form(f"edit_{book_id}"):
                             status = st.selectbox(
                                 "Status",
@@ -571,4 +562,112 @@ elif page == "Coleção":
                                 if book.get("status", "Quero ler") in statuses else 0,
                                 key=f"status_{book_id}",
                             )
-                            rating = st.select_
+                            rating = st.select_slider(
+                                "Avaliação",
+                                options=[0, 1, 2, 3, 4, 5],
+                                value=int(book.get("rating") or 0),
+                                format_func=lambda x: "Sem nota" if x == 0 else "⭐" * x,
+                                key=f"rating_{book_id}",
+                            )
+                            folder_names = ["Sem estante"] + [f["name"] for f in folders]
+                            folder_ids = [""] + [str(f["id"]) for f in folders]
+                            folder_index = folder_ids.index(current_fid) if current_fid in folder_ids else 0
+                            chosen_folder_name = st.selectbox(
+                                "Estante",
+                                folder_names,
+                                index=folder_index,
+                                key=f"folder_{book_id}",
+                            )
+                            personal_note = st.text_area("Nota pessoal", value=book.get("personal_note") or "", key=f"note_{book_id}")
+                            
+                            save = st.form_submit_button("Salvar alterações", type="primary", use_container_width=True)
+                        if save:
+                            try:
+                                save_book({
+                                    "status": status,
+                                    "rating": rating,
+                                    "folder_id": next((f["id"] for f in folders if f["name"] == chosen_folder_name), None),
+                                    "personal_note": personal_note.strip(),
+                                }, existing_id=book_id)
+                                st.session_state["notice"] = ("success", "Livro atualizado com sucesso!")
+                                st.rerun()
+                            except Exception as exc:
+                                st.error(f"Erro ao salvar: {exc}")
+                        
+                        if st.button("🗑️ Excluir livro", key=f"delete_{book_id}", use_container_width=True):
+                            st.session_state[f"confirm_delete_{book_id}"] = True
+                        if st.session_state.get(f"confirm_delete_{book_id}"):
+                            st.warning("Tem certeza?")
+                            yes, no = st.columns(2)
+                            if yes.button("Sim", key=f"yes_delete_{book_id}"):
+                                delete_book(book_id)
+                                st.session_state["notice"] = ("success", "Livro excluído.")
+                                st.rerun()
+                            if no.button("Não", key=f"no_delete_{book_id}"):
+                                st.session_state[f"confirm_delete_{book_id}"] = False
+                                st.rerun()
+
+# ============================================================
+# 3. DESCOBRIR LIVROS
+# ============================================================
+elif page == "Descobrir":
+    st.title("🔍 Descobrir Livros")
+    st.write("Pesquise no catálogo global da Open Library e adicione direto à sua estante.")
+    with st.form("search_books_form"):
+        term = st.text_input("O que você quer encontrar?", placeholder="Ex.: Jane Eyre, Machado de Assis, fantasia")
+        limit = st.selectbox("Quantidade de resultados", [10, 20, 40], index=1)
+        do_search = st.form_submit_button("Buscar", type="primary")
+    if do_search:
+        if not term.strip():
+            st.warning("Digite um termo para a busca.")
+        else:
+            try:
+                with st.spinner("Consultando a Open Library..."):
+                    st.session_state["search_results"] = search_books(term.strip(), limit)
+                if not st.session_state["search_results"]:
+                    st.info("Não encontrei resultados. Tente outro termo.")
+            except requests.RequestException:
+                st.error("Não consegui acessar a Open Library agora. Tente novamente.")
+
+    existing_keys = {b.get("work_key") for b in books}
+    for idx, result in enumerate(st.session_state.get("search_results", [])):
+        with st.container(border=True):
+            c1, c2, c3 = st.columns([1, 5, 1])
+            with c1:
+                if result.get("cover_url"):
+                    st.image(result["cover_url"], width=80)
+                else:
+                    st.caption("Sem capa")
+            with c2:
+                st.markdown(f"**{result['title']}**")
+                st.caption(result["authors"])
+                meta = []
+                if result.get("first_publish_year"):
+                    meta.append(f"Ano: {result['first_publish_year']}")
+                if result.get("publisher"):
+                    meta.append(f"Editora: {result['publisher']}")
+                if meta:
+                    st.caption(" · ".join(meta))
+            with c3:
+                if result.get("work_key") in existing_keys:
+                    st.caption("✨ Na estante")
+                else:
+                    with st.form(f"add_result_{idx}"):
+                        add = st.form_submit_button("＋ Adicionar", type="primary", use_container_width=True)
+                    if add:
+                        try:
+                            record = to_book_record(result)
+                            save_book(record)
+                            st.session_state["notice"] = ("success", f"“{result['title']}” adicionado à estante!")
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(f"Erro ao adicionar: {exc}")
+
+# ============================================================
+# 4. BUSCAR POR AUTOR
+# ============================================================
+elif page == "Autores":
+    st.title("✍️ Buscar por Autor")
+    st.write("Explore obras catalogadas de um autor específico.")
+    with st.form("author_search_form"):
+        author_query = st.text_input("Nome do autor", placeholder="Ex.: Charlotte Brontë
