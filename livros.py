@@ -67,7 +67,7 @@ st.markdown(
         color: var(--text-dark);
     }
     div.stButton > button[kind="secondary"]:hover {
-        background-color: var(--soft-lavender);
+        background-color: #F3E8FF;
     }
     </style>
     """,
@@ -76,7 +76,8 @@ st.markdown(
 
 OPENLIBRARY_SEARCH = "https://openlibrary.org/search.json"
 OPENLIBRARY_AUTHOR = "https://openlibrary.org/search/authors.json"
-HEADERS = {"User-Agent": "MinhaBibliotecaPessoal/1.0 (personal-library-app)"}
+GOOGLE_BOOKS_API = "https://www.googleapis.com/books/v1/volumes"
+HEADERS = {"User-Agent": "MinhaEstantePessoal/1.0 (personal-library-app)"}
 
 # ============================================================
 # SUPABASE & SESSÃO
@@ -112,7 +113,7 @@ def init_session():
 
 init_session()
 
-# Tenta restaurar a sessão existente para evitar logins repetidos
+# Restaura a sessão existente para evitar logins repetidos
 if supabase and st.session_state.get("user") is None:
     try:
         session = supabase.auth.get_session()
@@ -274,7 +275,7 @@ def image_to_base64(uploaded_file) -> str:
     return f"data:{mime};base64," + base64.b64encode(raw).decode("utf-8")
 
 # ============================================================
-# OPEN LIBRARY API
+# BUSCA INTELIGENTE HÍBRIDA (Google Books + Open Library)
 # ============================================================
 def normalize_text(value: Any, fallback: str = "") -> str:
     if isinstance(value, list):
@@ -283,91 +284,151 @@ def normalize_text(value: Any, fallback: str = "") -> str:
         return fallback
     return str(value)
 
-def search_books(term: str, limit: int = 20) -> list[dict[str, Any]]:
-    response = requests.get(
-        OPENLIBRARY_SEARCH,
-        params={
-            "q": term,
-            "limit": limit,
-            "fields": "key,title,author_name,first_publish_year,cover_i,subject,language,isbn,publisher,edition_count",
-        },
-        headers=HEADERS,
-        timeout=15,
-    )
-    response.raise_for_status()
-    data = response.json()
-    results = []
-    for doc in data.get("docs", []):
-        work_key = doc.get("key", "")
-        cover_id = doc.get("cover_i")
-        results.append({
-            "work_key": work_key,
-            "title": normalize_text(doc.get("title"), "Título desconhecido"),
-            "authors": normalize_text(doc.get("author_name"), "Autor desconhecido"),
-            "first_publish_year": doc.get("first_publish_year"),
-            "cover_url": f"https://covers.openlibrary.org/b/id/{cover_id}-M.jpg" if cover_id else "",
-            "genres": (doc.get("subject") or [])[:12],
-            "languages": doc.get("language") or [],
-            "isbn": (doc.get("isbn") or [""])[0],
-            "publisher": (doc.get("publisher") or [""])[0],
-            "edition_count": doc.get("edition_count", 0),
-        })
-    return results
+def search_google_books(term: str, limit: int = 10) -> list[dict[str, Any]]:
+    try:
+        response = requests.get(
+            GOOGLE_BOOKS_API,
+            params={"q": term, "maxResults": limit},
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+        results = []
+        for item in data.get("items", []):
+            vi = item.get("volumeInfo", {})
+            image_links = vi.get("imageLinks", {})
+            cover_url = image_links.get("thumbnail") or image_links.get("smallThumbnail") or ""
+            if cover_url.startswith("http://"):
+                cover_url = cover_url.replace("http://", "https://", 1)
+            
+            isbn = ""
+            for identifier in vi.get("industryIdentifiers", []):
+                if identifier.get("type") in ("ISBN_13", "ISBN_10"):
+                    isbn = identifier.get("identifier", "")
+                    break
+
+            pub_date = vi.get("publishedDate", "")
+            year = int(pub_date[:4]) if pub_date and len(pub_date) >= 4 and pub_date[:4].isdigit() else None
+
+            results.append({
+                "work_key": f"gb_{item.get('id', '')}",
+                "title": normalize_text(vi.get("title"), "Título desconhecido"),
+                "authors": normalize_text(vi.get("authors"), "Autor desconhecido"),
+                "first_publish_year": year,
+                "cover_url": cover_url,
+                "genres": vi.get("categories", [])[:8],
+                "languages": [vi.get("language", "pt")],
+                "isbn": isbn,
+                "publisher": vi.get("publisher", ""),
+                "edition_count": 1,
+                "source": "Google Books"
+            })
+        return results
+    except Exception:
+        return []
+
+def search_openlibrary(term: str, limit: int = 10) -> list[dict[str, Any]]:
+    try:
+        response = requests.get(
+            OPENLIBRARY_SEARCH,
+            params={
+                "q": term,
+                "limit": limit,
+                "fields": "key,title,author_name,first_publish_year,cover_i,subject,language,isbn,publisher,edition_count",
+            },
+            headers=HEADERS,
+            timeout=12,
+        )
+        response.raise_for_status()
+        data = response.json()
+        results = []
+        for doc in data.get("docs", []):
+            work_key = doc.get("key", "")
+            cover_id = doc.get("cover_i")
+            results.append({
+                "work_key": work_key,
+                "title": normalize_text(doc.get("title"), "Título desconhecido"),
+                "authors": normalize_text(doc.get("author_name"), "Autor desconhecido"),
+                "first_publish_year": doc.get("first_publish_year"),
+                "cover_url": f"https://covers.openlibrary.org/b/id/{cover_id}-M.jpg" if cover_id else "",
+                "genres": (doc.get("subject") or [])[:8],
+                "languages": doc.get("language") or [],
+                "isbn": (doc.get("isbn") or [""])[0],
+                "publisher": (doc.get("publisher") or [""])[0],
+                "edition_count": doc.get("edition_count", 0),
+                "source": "Open Library"
+            })
+        return results
+    except Exception:
+        return []
+
+def search_combined_catalogs(term: str, limit: int = 20) -> list[dict[str, Any]]:
+    # Busca segura combinando Google Books e Open Library
+    gb_results = search_google_books(term, limit=limit // 2)
+    ol_results = search_openlibrary(term, limit=limit // 2)
+    
+    # Prioriza Google Books (ótimo para pt-BR), complementando com Open Library
+    combined = gb_results + ol_results
+    return combined
 
 def search_author_works(author_name: str, limit: int = 100) -> tuple[list[dict[str, Any]], str | None]:
-    response = requests.get(
-        OPENLIBRARY_AUTHOR,
-        params={"q": author_name, "limit": 10},
-        headers=HEADERS,
-        timeout=15,
-    )
-    response.raise_for_status()
-    docs = response.json().get("docs", [])
-    if not docs:
+    try:
+        response = requests.get(
+            OPENLIBRARY_AUTHOR,
+            params={"q": author_name, "limit": 10},
+            headers=HEADERS,
+            timeout=15,
+        )
+        response.raise_for_status()
+        docs = response.json().get("docs", [])
+        if not docs:
+            return [], None
+
+        chosen = next(
+            (d for d in docs if d.get("name", "").casefold() == author_name.casefold()),
+            docs[0],
+        )
+        author_key = chosen.get("key")
+        if not author_key:
+            return [], chosen.get("name")
+
+        works_response = requests.get(
+            f"https://openlibrary.org{author_key}/works.json",
+            params={"limit": limit},
+            headers=HEADERS,
+            timeout=20,
+        )
+        works_response.raise_for_status()
+        works = works_response.json().get("entries", [])
+        results = []
+        for work in works:
+            cover_ids = work.get("covers") or []
+            cover_id = next((x for x in cover_ids if isinstance(x, int) and x > 0), None)
+            results.append({
+                "work_key": work.get("key", ""),
+                "title": normalize_text(work.get("title"), "Título desconhecido"),
+                "authors": chosen.get("name", author_name),
+                "first_publish_year": None,
+                "cover_url": f"https://covers.openlibrary.org/b/id/{cover_id}-M.jpg" if cover_id else "",
+                "genres": [],
+                "languages": [],
+                "isbn": "",
+                "publisher": "",
+                "edition_count": 0,
+                "source": "Open Library"
+            })
+        return results, chosen.get("name", author_name)
+    except Exception:
         return [], None
 
-    chosen = next(
-        (d for d in docs if d.get("name", "").casefold() == author_name.casefold()),
-        docs[0],
-    )
-    author_key = chosen.get("key")
-    if not author_key:
-        return [], chosen.get("name")
-
-    works_response = requests.get(
-        f"https://openlibrary.org{author_key}/works.json",
-        params={"limit": limit},
-        headers=HEADERS,
-        timeout=20,
-    )
-    works_response.raise_for_status()
-    works = works_response.json().get("entries", [])
-    results = []
-    for work in works:
-        cover_ids = work.get("covers") or []
-        cover_id = next((x for x in cover_ids if isinstance(x, int) and x > 0), None)
-        results.append({
-            "work_key": work.get("key", ""),
-            "title": normalize_text(work.get("title"), "Título desconhecido"),
-            "authors": chosen.get("name", author_name),
-            "first_publish_year": None,
-            "cover_url": f"https://covers.openlibrary.org/b/id/{cover_id}-M.jpg" if cover_id else "",
-            "genres": [],
-            "languages": [],
-            "isbn": "",
-            "publisher": "",
-            "edition_count": 0,
-        })
-    return results, chosen.get("name", author_name)
-
 def get_work_description(work_key: str) -> str:
-    if not work_key:
+    if not work_key or work_key.startswith("gb_"):
         return ""
     try:
         response = requests.get(
             f"https://openlibrary.org{work_key}.json",
             headers=HEADERS,
-            timeout=12,
+            timeout=10,
         )
         response.raise_for_status()
         description = response.json().get("description", "")
@@ -375,11 +436,11 @@ def get_work_description(work_key: str) -> str:
             return description.get("value", "")
         if isinstance(description, str):
             return description
-    except requests.RequestException:
+    except Exception:
         pass
     return ""
 
-def to_book_record(result: dict[str, Any]) -> dict[str, Any]:
+def to_book_record(result: dict[str, Any]) -> str:
     return {
         "title": result["title"],
         "authors": result["authors"],
@@ -519,7 +580,6 @@ elif page == "Coleção":
     folder_options = {"Todas as estantes": ""}
     folder_options.update({name: fid for fid, name in folder_map.items()})
     
-    # Sincroniza a estante selecionada a partir da página de Estantes
     active_folder_name = st.session_state.get("active_folder_filter", "Todas as estantes")
     if active_folder_name not in folder_options:
         active_folder_name = "Todas as estantes"
@@ -541,7 +601,6 @@ elif page == "Coleção":
             )
             sort_by = st.selectbox("Ordenar por", ["Mais recentes", "Título A–Z", "Melhor avaliação", "Ano de publicação"])
 
-    # Atualiza a sessão caso o usuário altere a opção manualmente
     st.session_state["active_folder_filter"] = folder_choice
 
     filtered = []
@@ -657,26 +716,26 @@ elif page == "Coleção":
                                 st.rerun()
 
 # ============================================================
-# 3. DESCOBRIR LIVROS
+# 3. DESCOBRIR LIVROS (Google Books + Open Library combinados)
 # ============================================================
 elif page == "Descobrir":
     st.title("🔍 Descobrir Livros")
-    st.write("Pesquise no catálogo global da Open Library e adicione direto à sua estante.")
+    st.write("Pesquise simultaneamente no Google Books e na Open Library para encontrar seus próximos livros.")
     with st.form("search_books_form"):
-        term = st.text_input("O que você quer encontrar?", placeholder="Ex.: Jane Eyre, Machado de Assis, fantasia")
+        term = st.text_input("O que você quer encontrar?", placeholder="Ex.: O Pequeno Príncipe, Colleen Hoover, fantasia")
         limit = st.selectbox("Quantidade de resultados", [10, 20, 40], index=1)
-        do_search = st.form_submit_button("Buscar", type="primary")
+        do_search = st.form_submit_button("Buscar em ambas as bases", type="primary")
     if do_search:
         if not term.strip():
             st.warning("Digite um termo para a busca.")
         else:
             try:
-                with st.spinner("Consultando a Open Library..."):
-                    st.session_state["search_results"] = search_books(term.strip(), limit)
+                with st.spinner("Consultando catálogos globais (Google Books & Open Library)..."):
+                    st.session_state["search_results"] = search_combined_catalogs(term.strip(), limit)
                 if not st.session_state["search_results"]:
                     st.info("Não encontrei resultados. Tente outro termo.")
-            except requests.RequestException:
-                st.error("Não consegui acessar a Open Library agora. Tente novamente.")
+            except Exception:
+                st.error("Ocorreu um imprevisto na busca. Tente novamente.")
 
     existing_keys = {b.get("work_key") for b in books}
     for idx, result in enumerate(st.session_state.get("search_results", [])):
@@ -695,6 +754,8 @@ elif page == "Descobrir":
                     meta.append(f"Ano: {result['first_publish_year']}")
                 if result.get("publisher"):
                     meta.append(f"Editora: {result['publisher']}")
+                if result.get("source"):
+                    meta.append(f"Fonte: {result['source']}")
                 if meta:
                     st.caption(" · ".join(meta))
             with c3:
@@ -733,8 +794,8 @@ elif page == "Autores":
                     st.session_state["resolved_author"] = resolved_name
                 if not results:
                     st.info("Não encontrei obras para esse autor.")
-            except requests.RequestException:
-                st.error("Não consegui acessar a Open Library. Tente novamente.")
+            except Exception:
+                st.error("Não foi possível carregar as obras agora. Tente novamente.")
     
     resolved = st.session_state.get("resolved_author")
     if resolved:
@@ -816,7 +877,6 @@ elif page == "Estantes":
                     st.markdown(f"**{folder['name']}**")
                     st.caption(f"{len(books_in_folder)} livro(s)")
                     
-                    # Redireciona para a Coleção filtrando apenas por esta estante
                     if st.button("📂 Ver livros", key=f"view_folder_{fid}", use_container_width=True):
                         st.session_state["active_folder_filter"] = folder["name"]
                         st.session_state["page"] = "Coleção"
