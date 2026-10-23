@@ -20,7 +20,7 @@ st.markdown(
     """
     <style>
     :root {
-        --bg-main: #FFF0F5; /* Lavender blush / Rosa bem suave */
+        --bg-main: #FFF0F5;
         --paper-bg: #FFFFFF;
         --lilac-accent: #E2D1F9;
         --pink-accent: #FFC6FF;
@@ -46,7 +46,7 @@ st.markdown(
         box-shadow: 0 6px 20px rgba(255, 198, 255, 0.5);
     }
     
-    /* Botões personalizados com tons pink e lilás */
+    /* Botões personalizados */
     div.stButton > button[kind="primary"] {
         background-color: #E2D1F9;
         border-color: #E2D1F9;
@@ -371,7 +371,7 @@ def to_book_record(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 # ============================================================
-# AUTH GATE & SIDEBAR (Botões verticais enfileirados)
+# AUTH GATE & SIDEBAR
 # ============================================================
 if supabase is None:
     st.error("Falta configurar a conexão com o Supabase nos secrets.")
@@ -386,7 +386,6 @@ with st.sidebar:
     st.caption(st.session_state.get("auth_email", "Conta conectada"))
     st.divider()
     
-    # Navegação com botões verticais empilhados
     nav_options = ["Início", "Coleção", "Descobrir", "Autores", "Estantes"]
     current_page = st.session_state.get("page", "Início")
     if current_page not in nav_options:
@@ -467,3 +466,109 @@ if page == "Início":
                 with st.container(border=True):
                     if book.get("cover_url"):
                         st.image(book["cover_url"], width=85)
+                    else:
+                        st.caption("📖 Sem capa")
+                    st.markdown(f"**{book.get('title', 'Sem título')}**")
+                    st.caption(book.get("authors", "Autor desconhecido"))
+
+# ============================================================
+# 2. COLEÇÃO (Pesquisa visível e filtros)
+# ============================================================
+elif page == "Coleção":
+    st.title("💖 Minha Coleção")
+    st.caption(f"{len(books)} livro(s) na sua biblioteca")
+
+    all_genres = sorted({
+        genre for b in books for genre in (b.get("genres") or [])
+        if isinstance(genre, str) and genre.strip()
+    })
+    all_authors = sorted({b.get("authors", "") for b in books if b.get("authors")})
+    statuses = ["Quero ler", "Lendo", "Lido", "Abandonado"]
+
+    # Barra de busca rápida visível
+    search_col, filter_col = st.columns([3, 1])
+    with search_col:
+        query = st.text_input("🔍 Pesquisar na sua coleção", placeholder="Buscar por título, autor ou ISBN...", key="collection_query")
+    
+    with filter_col:
+        st.write("") # Espaçamento
+        st.write("")
+
+    with st.expander("⚙️ Filtros avançados e ordenação", expanded=False):
+        f1, f2, f3 = st.columns(3)
+        with f1:
+            status_filter = st.multiselect("Status de leitura", statuses, default=[])
+        with f2:
+            genre_filter = st.multiselect("Gêneros", all_genres, default=[])
+            author_filter = st.multiselect("Autores", all_authors, default=[])
+        with f3:
+            folder_options = {"Todas as estantes": ""}
+            folder_options.update({name: fid for fid, name in folder_map.items()})
+            folder_choice = st.selectbox("Estante", list(folder_options.keys()))
+            sort_by = st.selectbox("Ordenar por", ["Mais recentes", "Título A–Z", "Melhor avaliação", "Ano de publicação"])
+
+    filtered = []
+    for b in books:
+        b_genres = b.get("genres") or []
+        if query and query.casefold() not in " ".join([
+            b.get("title", ""), b.get("authors", ""), b.get("isbn", "")
+        ]).casefold():
+            continue
+        if status_filter and b.get("status") not in status_filter:
+            continue
+        if genre_filter and not set(genre_filter).intersection(set(b_genres)):
+            continue
+        if author_filter and b.get("authors", "") not in author_filter:
+            continue
+        if folder_choice != "Todas as estantes" and str(b.get("folder_id") or "") != folder_options[folder_choice]:
+            continue
+        filtered.append(b)
+
+    if sort_by == "Título A–Z":
+        filtered.sort(key=lambda b: b.get("title", "").casefold())
+    elif sort_by == "Melhor avaliação":
+        filtered.sort(key=lambda b: int(b.get("rating") or 0), reverse=True)
+    elif sort_by == "Ano de publicação":
+        filtered.sort(key=lambda b: b.get("first_publish_year") or 999999)
+
+    if not filtered:
+        st.info("Nenhum livro corresponde à sua busca ou filtros.")
+    else:
+        for idx, book in enumerate(filtered):
+            book_id = str(book["id"])
+            with st.container(border=True):
+                c_img, c_info, c_edit = st.columns([1, 4, 2])
+                with c_img:
+                    if book.get("cover_url"):
+                        st.image(book["cover_url"], width=90)
+                    else:
+                        st.caption("📖 Sem capa")
+                with c_info:
+                    st.markdown(f"### {book.get('title', 'Sem título')}")
+                    st.caption(f"✍️ **Autor:** {book.get('authors', 'Desconhecido')}")
+                    st.caption(f"📌 **Status:** {book.get('status', 'Quero ler')}")
+                    
+                    rating_val = int(book.get("rating") or 0)
+                    if rating_val > 0:
+                        st.caption(f"⭐ **Avaliação:** {'⭐' * rating_val}")
+                    else:
+                        st.caption("⭐ **Avaliação:** Sem nota")
+                        
+                    current_fid = str(book.get("folder_id") or "")
+                    folder_name = folder_map.get(current_fid, "Geral")
+                    st.caption(f"📁 **Estante:** {folder_name}")
+                    
+                    if book.get("personal_note"):
+                        st.caption(f"💬 *Nota:* {book.get('personal_note')}")
+                        
+                with c_edit:
+                    with st.expander("✏️ Editar Livro"):
+                        with st.form(f"edit_{book_id}"):
+                            status = st.selectbox(
+                                "Status",
+                                statuses,
+                                index=statuses.index(book.get("status", "Quero ler"))
+                                if book.get("status", "Quero ler") in statuses else 0,
+                                key=f"status_{book_id}",
+                            )
+                            rating = st.select_
