@@ -768,7 +768,7 @@ elif page == "Descobrir":
     existing_keys = {b.get("work_key") for b in books}
     
     # Opções de estantes para o seletor rápido
-    folder_names_options = ["Sem estante"] + [f["name"] for f in folders]
+    folder_names_options = ["-"] + [f["name"] for f in folders]
     
     for idx, result in enumerate(st.session_state.get("search_results", [])):
         with st.container(border=True):
