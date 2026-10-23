@@ -104,12 +104,25 @@ def init_session():
         "resolved_author": None,
         "notice": None,
         "page": "Início",
+        "active_folder_filter": "Todas as estantes",
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
 
 init_session()
+
+# Tenta restaurar a sessão existente para evitar logins repetidos
+if supabase and st.session_state.get("user") is None:
+    try:
+        session = supabase.auth.get_session()
+        if session and session.user:
+            st.session_state["user"] = session.user
+            st.session_state["access_token"] = session.access_token
+            st.session_state["refresh_token"] = session.refresh_token
+            st.session_state["auth_email"] = session.user.email or ""
+    except Exception:
+        pass
 
 if supabase and st.session_state.get("access_token") and st.session_state.get("refresh_token"):
     try:
@@ -133,12 +146,18 @@ def show_notice():
         st.session_state["notice"] = None
 
 def sign_out():
+    try:
+        if supabase:
+            supabase.auth.sign_out()
+    except Exception:
+        pass
     st.session_state["user"] = None
     st.session_state["access_token"] = None
     st.session_state["refresh_token"] = None
     st.session_state["search_results"] = []
     st.session_state["author_results"] = []
     st.session_state["resolved_author"] = None
+    st.session_state["active_folder_filter"] = "Todas as estantes"
     st.rerun()
 
 # ============================================================
@@ -497,6 +516,15 @@ elif page == "Coleção":
 
     query = st.text_input("🔍 Pesquisar por título, autor, editora ou ISBN", value="", key="search_collection_input")
 
+    folder_options = {"Todas as estantes": ""}
+    folder_options.update({name: fid for fid, name in folder_map.items()})
+    
+    # Sincroniza a estante selecionada a partir da página de Estantes
+    active_folder_name = st.session_state.get("active_folder_filter", "Todas as estantes")
+    if active_folder_name not in folder_options:
+        active_folder_name = "Todas as estantes"
+    folder_index = list(folder_options.keys()).index(active_folder_name)
+
     with st.expander("⚙️ Filtros avançados e ordenação", expanded=False):
         f1, f2, f3 = st.columns(3)
         with f1:
@@ -505,10 +533,16 @@ elif page == "Coleção":
             genre_filter = st.multiselect("Gêneros", all_genres, default=[])
             author_filter = st.multiselect("Autores", all_authors, default=[])
         with f3:
-            folder_options = {"Todas as estantes": ""}
-            folder_options.update({name: fid for fid, name in folder_map.items()})
-            folder_choice = st.selectbox("Estante", list(folder_options.keys()))
+            folder_choice = st.selectbox(
+                "Estante", 
+                list(folder_options.keys()), 
+                index=folder_index,
+                key="collection_folder_selectbox"
+            )
             sort_by = st.selectbox("Ordenar por", ["Mais recentes", "Título A–Z", "Melhor avaliação", "Ano de publicação"])
+
+    # Atualiza a sessão caso o usuário altere a opção manualmente
+    st.session_state["active_folder_filter"] = folder_choice
 
     filtered = []
     for b in books:
@@ -534,7 +568,7 @@ elif page == "Coleção":
         filtered.sort(key=lambda b: b.get("first_publish_year") or 999999)
 
     if not filtered:
-        st.info("Nenhum livro encontrado.")
+        st.info("Nenhum livro encontrado nesta estante ou com os filtros selecionados.")
     else:
         for idx, book in enumerate(filtered):
             book_id = str(book["id"])
@@ -584,11 +618,11 @@ elif page == "Coleção":
                             )
                             folder_names = ["Sem estante"] + [f["name"] for f in folders]
                             folder_ids = [""] + [str(f["id"]) for f in folders]
-                            folder_index = folder_ids.index(current_fid) if current_fid in folder_ids else 0
+                            folder_index_edit = folder_ids.index(current_fid) if current_fid in folder_ids else 0
                             chosen_folder_name = st.selectbox(
                                 "Estante",
                                 folder_names,
-                                index=folder_index,
+                                index=folder_index_edit,
                                 key=f"folder_{book_id}",
                             )
                             publisher = st.text_input("Editora", value=book.get("publisher") or "", key=f"publisher_{book_id}")
@@ -734,13 +768,12 @@ elif page == "Autores":
                             st.error(f"Erro ao adicionar: {exc}")
 
 # ============================================================
-# 5. ESTANTES (Navegáveis lado a lado + Capa personalizada)
+# 5. ESTANTES
 # ============================================================
 elif page == "Estantes":
     st.title("📁 Gerenciar Estantes Navegáveis")
     st.write("Crie e visualize suas estantes temáticas lado a lado com capa personalizada.")
     
-    # Criar nova estante com upload de capa opcional
     with st.expander("✨ Criar nova estante", expanded=False):
         with st.form("new_folder_form"):
             new_name = st.text_input("Nome da estante", placeholder="Ex.: Clássicos, Favoritos, Romance")
@@ -765,7 +798,6 @@ elif page == "Estantes":
 
     st.divider()
 
-    # Visualização Navegável das Estantes Lado a Lado (Grid)
     if folders:
         st.subheader("Suas Estantes")
         cols = st.columns(3)
@@ -775,7 +807,6 @@ elif page == "Estantes":
             
             with cols[idx % 3]:
                 with st.container(border=True):
-                    # Exibe a capa da estante ou ícone padrão
                     cover_data = folder.get("cover_data")
                     if cover_data:
                         st.image(cover_data, width=110)
@@ -785,8 +816,9 @@ elif page == "Estantes":
                     st.markdown(f"**{folder['name']}**")
                     st.caption(f"{len(books_in_folder)} livro(s)")
                     
-                    # Botão para filtrar a coleção por esta estante
+                    # Redireciona para a Coleção filtrando apenas por esta estante
                     if st.button("📂 Ver livros", key=f"view_folder_{fid}", use_container_width=True):
+                        st.session_state["active_folder_filter"] = folder["name"]
                         st.session_state["page"] = "Coleção"
                         st.rerun()
                         
