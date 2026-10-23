@@ -79,6 +79,8 @@ supabase = get_supabase()
 def init_session():
     defaults = {
         "user": None,
+        "access_token": None,  # <-- ADICIONAR ESTA LINHA
+        "refresh_token": None, # <-- ADICIONAR ESTA LINHA
         "auth_email": "",
         "search_results": [],
         "author_results": [],
@@ -88,6 +90,20 @@ def init_session():
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+
+init_session()
+
+supabase = get_supabase()
+
+# <-- ADICIONE ESTE BLOCO LOGO ABAIXO DE "supabase = get_supabase()"
+if supabase and st.session_state.get("access_token") and st.session_state.get("refresh_token"):
+    try:
+        supabase.auth.set_session(
+            st.session_state["access_token"],
+            st.session_state["refresh_token"]
+        )
+    except Exception:
+        pass
 
 init_session()
 
@@ -132,6 +148,8 @@ def auth_screen():
                         {"email": email.strip(), "password": password}
                     )
                     st.session_state["user"] = result.user
+                    st.session_state["access_token"] = result.session.access_token   # <-- ADICIONAR
+                    st.session_state["refresh_token"] = result.session.refresh_token # <-- ADICIONAR
                     st.session_state["auth_email"] = email.strip()
                     st.rerun()
                 except Exception:
@@ -154,9 +172,8 @@ def auth_screen():
                         {"email": email_new.strip(), "password": password_new}
                     )
                     if result.session:
-                        st.session_state["user"] = result.user
-                        st.session_state["auth_email"] = email_new.strip()
-                        st.rerun()
+                        st.session_state["access_token"] = result.session.access_token
+st.session_state["refresh_token"] = result.session.refresh_token
                     else:
                         st.success("Conta criada! Se a confirmação de e-mail estiver ativa, confirme seu endereço e depois entre.")
                 except Exception as exc:
@@ -367,6 +384,14 @@ with st.sidebar:
     )
     if st.button("Sair da conta", use_container_width=True):
         sign_out()
+        def sign_out():
+    st.session_state["user"] = None
+    st.session_state["access_token"] = None  # <-- ADICIONAR
+    st.session_state["refresh_token"] = None # <-- ADICIONAR
+    st.session_state["search_results"] = []
+    st.session_state["author_results"] = []
+    st.session_state["selected_book"] = None
+    st.rerun()
 
 show_notice()
 
