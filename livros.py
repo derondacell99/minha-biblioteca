@@ -7,7 +7,7 @@ import streamlit as st
 from supabase import create_client, Client
 
 # ============================================================
-# CONFIGURAÇÃO
+# CONFIGURAÇÃO E ESTÉTICA AVANÇADA
 # ============================================================
 st.set_page_config(
     page_title="Minha Biblioteca",
@@ -16,7 +16,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Paleta: papel creme, verde-oliva e marrom
 st.markdown(
     """
     <style>
@@ -28,26 +27,44 @@ st.markdown(
         --brown: #70543E;
         --ink: #302D26;
         --muted: #777366;
+        --border-color: #E2DBD0;
     }
     .stApp { background: var(--cream); color: var(--ink); }
-    [data-testid="stSidebar"] { background: #EAE5D6; }
-    h1, h2, h3 { color: var(--olive-dark); }
+    [data-testid="stSidebar"] { background: #EFEBD9; border-right: 1px solid var(--border-color); }
+    h1, h2, h3 { color: var(--olive-dark); font-family: sans-serif; }
+    
+    /* Cartões / Containers elegantes */
     div[data-testid="stVerticalBlockBorderWrapper"] {
         background: var(--paper);
-        border-color: #D8D0BC;
-        border-radius: 14px;
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(48, 45, 38, 0.04);
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
     }
-    .book-title { color: var(--olive-dark); font-size: 1.04rem; font-weight: 700; }
+    div[data-testid="stVerticalBlockBorderWrapper"]:hover {
+        box-shadow: 0 4px 14px rgba(48, 45, 38, 0.08);
+    }
+    
+    .book-title { color: var(--olive-dark); font-size: 1.05rem; font-weight: 700; }
     .small-muted { color: var(--muted); font-size: .88rem; }
+    
+    /* Botões personalizados */
     div.stButton > button[kind="primary"] {
-        background: var(--olive);
+        background-color: var(--olive);
         border-color: var(--olive);
         color: white;
+        border-radius: 8px;
+        font-weight: 500;
+        transition: background-color 0.2s;
     }
     div.stButton > button[kind="primary"]:hover {
-        background: var(--olive-dark);
+        background-color: var(--olive-dark);
         border-color: var(--olive-dark);
         color: white;
+    }
+    div.stButton > button[kind="secondary"] {
+        border-radius: 8px;
+        border-color: var(--border-color);
     }
     </style>
     """,
@@ -55,14 +72,14 @@ st.markdown(
 )
 
 st.title("📚 Minha Biblioteca")
-st.caption("Sua estante pessoal: organize, descubra e acompanhe suas leituras.")
+st.caption("Sua estante pessoal: organize, descubra e acompanhe suas leituras com elegância.")
 
 OPENLIBRARY_SEARCH = "https://openlibrary.org/search.json"
 OPENLIBRARY_AUTHOR = "https://openlibrary.org/search/authors.json"
 HEADERS = {"User-Agent": "MinhaBibliotecaPessoal/1.0 (personal-library-app)"}
 
 # ============================================================
-# SUPABASE
+# SUPABASE & SESSÃO
 # ============================================================
 def get_supabase() -> Client | None:
     try:
@@ -93,7 +110,7 @@ def init_session():
 
 init_session()
 
-# Restaura a sessão do Supabase após reloads do Streamlit
+# Restaura a sessão para manter estabilidade no RLS
 if supabase and st.session_state.get("access_token") and st.session_state.get("refresh_token"):
     try:
         supabase.auth.set_session(
@@ -125,11 +142,11 @@ def sign_out():
     st.rerun()
 
 # ============================================================
-# AUTHENTICATION
+# AUTENTICAÇÃO
 # ============================================================
 def auth_screen():
     st.subheader("Sua biblioteca privada")
-    st.write("Entre na sua conta ou crie uma conta para sincronizar os livros entre computadores.")
+    st.write("Entre na sua conta ou crie uma conta para sincronizar seus livros com segurança.")
     login_tab, signup_tab = st.tabs(["Entrar", "Criar conta"])
 
     with login_tab:
@@ -151,19 +168,19 @@ def auth_screen():
                     st.session_state["auth_email"] = email.strip()
                     st.rerun()
                 except Exception:
-                    st.error("Não foi possível entrar. Confira os dados e, se necessário, confirme seu e-mail.")
+                    st.error("Não foi possível entrar. Confira seus dados.")
 
     with signup_tab:
         with st.form("signup_form"):
             email_new = st.text_input("E-mail", key="signup_email")
-            password_new = st.text_input("Crie uma senha", type="password", key="signup_password")
+            password_new = st.text_input("Crie uma senha (mín. 8 caracteres)", type="password", key="signup_password")
             password_confirm = st.text_input("Repita a senha", type="password", key="signup_confirm")
             submitted_new = st.form_submit_button("Criar minha conta", type="primary", use_container_width=True)
         if submitted_new:
             if not email_new.strip() or len(password_new) < 8:
-                st.warning("Informe um e-mail e uma senha com pelo menos 8 caracteres.")
+                st.warning("Informe um e-mail válido e senha com pelo menos 8 caracteres.")
             elif password_new != password_confirm:
-                st.warning("As senhas não são iguais.")
+                st.warning("As senhas não coincidem.")
             else:
                 try:
                     result = supabase.auth.sign_up(
@@ -176,12 +193,12 @@ def auth_screen():
                         st.session_state["auth_email"] = email_new.strip()
                         st.rerun()
                     else:
-                        st.success("Conta criada! Se a confirmação de e-mail estiver ativa, confirme seu endereço e depois entre.")
+                        st.success("Conta criada com sucesso! Faça login na aba ao lado.")
                 except Exception as exc:
                     st.error(f"Não foi possível criar a conta: {exc}")
 
 # ============================================================
-# DATA ACCESS
+# ACESSO A DADOS (BOOKS & FOLDERS)
 # ============================================================
 def user_id() -> str:
     return str(st.session_state["user"].id)
@@ -227,7 +244,7 @@ def delete_folder(folder_id: str):
     supabase.table("folders").delete().eq("id", folder_id).eq("user_id", user_id()).execute()
 
 # ============================================================
-# OPEN LIBRARY SEARCH
+# OPEN LIBRARY API
 # ============================================================
 def normalize_text(value: Any, fallback: str = "") -> str:
     if isinstance(value, list):
@@ -353,29 +370,16 @@ def to_book_record(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 # ============================================================
-# AUTH GATE
+# AUTH GATE & SIDEBAR
 # ============================================================
 if supabase is None:
-    st.error("Falta configurar a conexão com o Supabase.")
-    st.markdown(
-        """
-        Crie `.streamlit/secrets.toml` na pasta do projeto com:
-
-        ```toml
-        SUPABASE_URL = "[https://SEU-PROJETO.supabase.co](https://SEU-PROJETO.supabase.co)"
-        SUPABASE_ANON_KEY = "SUA_CHAVE_ANON_PUBLIC"
-        ```
-
-        Use a URL e a chave pública/anon do seu projeto Supabase. **Nunca coloque a chave `service_role` neste aplicativo.**
-        """
-    )
+    st.error("Falta configurar a conexão com o Supabase nos secrets.")
     st.stop()
 
 if st.session_state["user"] is None:
     auth_screen()
     st.stop()
 
-# Sidebar
 with st.sidebar:
     st.markdown("## 🌿 Minha estante")
     st.caption(st.session_state.get("auth_email", "Conta conectada"))
@@ -383,6 +387,7 @@ with st.sidebar:
         "Navegação",
         ["Visão geral", "Minha coleção", "Descobrir livros", "Buscar por autor", "Pastas"],
     )
+    st.divider()
     if st.button("Sair da conta", use_container_width=True):
         sign_out()
 
@@ -392,14 +397,14 @@ try:
     books = load_books()
     folders = load_folders()
 except Exception as exc:
-    st.error("Não consegui carregar seus dados. Confira a configuração do banco Supabase.")
+    st.error("Não consegui carregar seus dados. Confira a configuração das políticas RLS no Supabase.")
     st.exception(exc)
     st.stop()
 
 folder_map = {str(f["id"]): f["name"] for f in folders}
 
 # ============================================================
-# DASHBOARD
+# 1. VISÃO GERAL (DASHBOARD)
 # ============================================================
 if page == "Visão geral":
     st.header("Sua biblioteca, no seu ritmo")
@@ -407,6 +412,7 @@ if page == "Visão geral":
     read_count = sum(1 for b in books if b.get("status") == "Lido")
     reading_count = sum(1 for b in books if b.get("status") == "Lendo")
     wishlist_count = sum(1 for b in books if b.get("status") == "Quero ler")
+    
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Livros na estante", total)
     c2.metric("Lidos", read_count)
@@ -443,7 +449,7 @@ if page == "Visão geral":
                     st.caption(f"{book.get('authors', 'Autor desconhecido')} · {book.get('status', 'Quero ler')}")
 
 # ============================================================
-# COLLECTION
+# 2. MINHA COLEÇÃO
 # ============================================================
 elif page == "Minha coleção":
     st.header("Minha coleção")
@@ -579,18 +585,18 @@ elif page == "Minha coleção":
                                 st.rerun()
 
 # ============================================================
-# DISCOVER BOOKS
+# 3. DESCOBRIR LIVROS
 # ============================================================
 elif page == "Descobrir livros":
     st.header("Descobrir livros")
-    st.write("Pesquise por título, autor ou assunto. Você poderá escolher entre vários resultados.")
+    st.write("Pesquise por título, autor ou assunto no catálogo da Open Library.")
     with st.form("search_books_form"):
         term = st.text_input("O que você quer encontrar?", placeholder="Ex.: Jane Eyre, Machado de Assis, fantasia")
         limit = st.selectbox("Quantidade de resultados", [10, 20, 40], index=1)
         do_search = st.form_submit_button("Buscar", type="primary")
     if do_search:
         if not term.strip():
-            st.warning("Digite um título, autor ou assunto.")
+            st.warning("Digite um termo para a busca.")
         else:
             try:
                 with st.spinner("Consultando a Open Library..."):
@@ -598,7 +604,7 @@ elif page == "Descobrir livros":
                 if not st.session_state["search_results"]:
                     st.info("Não encontrei resultados. Tente outro termo.")
             except requests.RequestException:
-                st.error("Não consegui acessar a Open Library agora. Verifique a conexão e tente novamente.")
+                st.error("Não consegui acessar a Open Library agora. Tente novamente.")
 
     for idx, result in enumerate(st.session_state["search_results"]):
         with st.container(border=True):
@@ -635,11 +641,11 @@ elif page == "Descobrir livros":
                         st.error(f"Não foi possível adicionar o livro: {exc}")
 
 # ============================================================
-# AUTHOR SEARCH
+# 4. BUSCAR POR AUTOR
 # ============================================================
 elif page == "Buscar por autor":
     st.header("Obras de um autor")
-    st.write("Busque um autor para listar as obras catalogadas pela Open Library.")
+    st.write("Busque um autor para listar as obras catalogadas na Open Library.")
     with st.form("author_search_form"):
         author_query = st.text_input("Nome do autor", placeholder="Ex.: Charlotte Brontë")
         author_limit = st.selectbox("Máximo de obras", [25, 50, 100], index=2)
@@ -660,7 +666,7 @@ elif page == "Buscar por autor":
     resolved = st.session_state.get("resolved_author")
     if resolved:
         st.subheader(f"Obras encontradas: {resolved}")
-        st.caption(f"{len(st.session_state['author_results'])} resultado(s). A lista depende da cobertura do catálogo.")
+        st.caption(f"{len(st.session_state['author_results'])} resultado(s).")
     results = st.session_state["author_results"]
     if results:
         for idx, result in enumerate(results):
@@ -686,13 +692,13 @@ elif page == "Buscar por autor":
                             st.error(f"Não foi possível adicionar o livro: {exc}")
 
 # ============================================================
-# FOLDERS
+# 5. PASTAS
 # ============================================================
 elif page == "Pastas":
     st.header("Pastas personalizadas")
-    st.write("Crie suas próprias estantes. Excluir uma pasta não exclui os livros: eles voltam a ficar sem pasta.")
+    st.write("Organize sua coleção em estantes temáticas. Excluir uma pasta mantém seus livros seguros.")
     with st.form("new_folder_form"):
-        new_name = st.text_input("Nome da nova pasta", placeholder="Ex.: Literatura brasileira")
+        new_name = st.text_input("Nome da nova pasta", placeholder="Ex.: Clássicos da Literatura")
         create = st.form_submit_button("Criar pasta", type="primary")
     if create:
         if not new_name.strip():
@@ -737,7 +743,7 @@ elif page == "Pastas":
                     if st.button("Excluir", key=f"del_folder_{fid}"):
                         st.session_state[f"confirm_folder_{fid}"] = True
                     if st.session_state.get(f"confirm_folder_{fid}"):
-                        st.warning("Excluir?")
+                        st.warning("Excluir pasta?")
                         if st.button("Confirmar", key=f"confirm_del_folder_{fid}"):
                             try:
                                 delete_folder(fid)
