@@ -79,21 +79,33 @@ GOOGLE_BOOKS_API = "https://www.googleapis.com/books/v1/volumes"
 HEADERS = {"User-Agent": "MinhaEstantePessoal/1.0 (personal-library-app)"}
 
 # ============================================================
-# GERENCIADOR DE COOKIES & SUPABASE
+# GERENCIADOR DE COOKIES & SUPABASE COM TOKEN INJETADO
 # ============================================================
 cookie_manager = stx.CookieManager(key="cookie_manager")
 
-def get_supabase() -> Client | None:
+def get_auth_supabase() -> Client | None:
+    """Cria um cliente do Supabase injetando o token JWT ativo do usuário nas requisições."""
     try:
         url = st.secrets["SUPABASE_URL"]
         key = st.secrets["SUPABASE_ANON_KEY"]
         if not url or not key:
             return None
-        return create_client(url, key)
+        
+        client = create_client(url, key)
+        access_token = st.session_state.get("access_token")
+        refresh_token = st.session_state.get("refresh_token")
+        
+        if access_token:
+            try:
+                client.auth.set_session(access_token, refresh_token or "")
+                client.postgrest.auth(access_token)
+            except Exception:
+                pass
+        return client
     except Exception:
         return None
 
-supabase = get_supabase()
+supabase = get_auth_supabase()
 
 def init_session():
     defaults = {
@@ -125,6 +137,7 @@ if supabase and st.session_state["user"] is None:
                 st.session_state["access_token"] = saved_access
                 st.session_state["refresh_token"] = saved_refresh
                 st.session_state["auth_email"] = res.user.email or ""
+                supabase.postgrest.auth(saved_access)
         except Exception:
             pass
 
@@ -227,8 +240,9 @@ def user_id() -> str:
     return str(st.session_state["user"].id)
 
 def load_books() -> list[dict[str, Any]]:
+    client = get_auth_supabase()
     result = (
-        supabase.table("books")
+        client.table("books")
         .select("*")
         .eq("user_id", user_id())
         .order("created_at", desc=True)
@@ -237,8 +251,9 @@ def load_books() -> list[dict[str, Any]]:
     return result.data or []
 
 def load_folders() -> list[dict[str, Any]]:
+    client = get_auth_supabase()
     result = (
-        supabase.table("folders")
+        client.table("folders")
         .select("*")
         .eq("user_id", user_id())
         .order("name")
@@ -247,27 +262,32 @@ def load_folders() -> list[dict[str, Any]]:
     return result.data or []
 
 def save_book(book: dict[str, Any], existing_id: str | None = None):
+    client = get_auth_supabase()
     payload = {**book, "user_id": user_id()}
     if existing_id:
-        supabase.table("books").update(payload).eq("id", existing_id).eq("user_id", user_id()).execute()
+        client.table("books").update(payload).eq("id", existing_id).eq("user_id", user_id()).execute()
     else:
-        supabase.table("books").insert(payload).execute()
+        client.table("books").insert(payload).execute()
 
 def delete_book(book_id: str):
-    supabase.table("books").delete().eq("id", book_id).eq("user_id", user_id()).execute()
+    client = get_auth_supabase()
+    client.table("books").delete().eq("id", book_id).eq("user_id", user_id()).execute()
 
 def create_folder(name: str, cover_data: str = ""):
-    supabase.table("folders").insert({"name": name.strip(), "cover_data": cover_data, "user_id": user_id()}).execute()
+    client = get_auth_supabase()
+    client.table("folders").insert({"name": name.strip(), "cover_data": cover_data, "user_id": user_id()}).execute()
 
 def update_folder(folder_id: str, name: str, cover_data: str | None = None):
+    client = get_auth_supabase()
     payload = {"name": name.strip()}
     if cover_data is not None:
         payload["cover_data"] = cover_data
-    supabase.table("folders").update(payload).eq("id", folder_id).eq("user_id", user_id()).execute()
+    client.table("folders").update(payload).eq("id", folder_id).eq("user_id", user_id()).execute()
 
 def delete_folder(folder_id: str):
-    supabase.table("books").update({"folder_id": None}).eq("folder_id", folder_id).eq("user_id", user_id()).execute()
-    supabase.table("folders").delete().eq("id", folder_id).eq("user_id", user_id()).execute()
+    client = get_auth_supabase()
+    client.table("books").update({"folder_id": None}).eq("folder_id", folder_id).eq("user_id", user_id()).execute()
+    client.table("folders").delete().eq("id", folder_id).eq("user_id", user_id()).execute()
 
 def image_to_base64(uploaded_file) -> str:
     raw = uploaded_file.getvalue()
