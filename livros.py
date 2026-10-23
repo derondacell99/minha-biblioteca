@@ -469,7 +469,7 @@ if page == "Início":
                     st.caption(book.get("authors", "Autor desconhecido"))
 
 # ============================================================
-# 2. COLEÇÃO (Pesquisa funcional + Filtros)
+# 2. COLEÇÃO
 # ============================================================
 elif page == "Coleção":
     st.title("💖 Minha Coleção")
@@ -482,7 +482,6 @@ elif page == "Coleção":
     all_authors = sorted({b.get("authors", "") for b in books if b.get("authors")})
     statuses = ["Quero ler", "Lendo", "Lido", "Abandonado"]
 
-    # Campo de Pesquisa Direta
     query = st.text_input("🔍 Pesquisar por título, autor ou ISBN", value="", key="search_collection_input")
 
     with st.expander("⚙️ Filtros avançados e ordenação", expanded=False):
@@ -670,4 +669,121 @@ elif page == "Autores":
     st.title("✍️ Buscar por Autor")
     st.write("Explore obras catalogadas de um autor específico.")
     with st.form("author_search_form"):
-        author_query = st.text_input("Nome do autor", placeholder="Ex.: Charlotte Brontë
+        author_query = st.text_input("Nome do autor", placeholder="Ex.: Charlotte Brontë")
+        author_limit = st.selectbox("Máximo de obras", [25, 50, 100], index=2)
+        author_submit = st.form_submit_button("Buscar obras", type="primary")
+    if author_submit:
+        if not author_query.strip():
+            st.warning("Digite o nome de um autor.")
+        else:
+            try:
+                with st.spinner("Procurando autor e obras..."):
+                    results, resolved_name = search_author_works(author_query.strip(), author_limit)
+                    st.session_state["author_results"] = results
+                    st.session_state["resolved_author"] = resolved_name
+                if not results:
+                    st.info("Não encontrei obras para esse autor.")
+            except requests.RequestException:
+                st.error("Não consegui acessar a Open Library. Tente novamente.")
+    
+    resolved = st.session_state.get("resolved_author")
+    if resolved:
+        st.subheader(f"Obras de: {resolved}")
+        st.caption(f"{len(st.session_state.get('author_results', []))} resultado(s).")
+    
+    existing_keys = {b.get("work_key") for b in books}
+    for idx, result in enumerate(st.session_state.get("author_results", [])):
+        with st.container(border=True):
+            c1, c2, c3 = st.columns([1, 5, 1])
+            with c1:
+                if result.get("cover_url"):
+                    st.image(result["cover_url"], width=70)
+                else:
+                    st.caption("Sem capa")
+            with c2:
+                st.markdown(f"**{result['title']}**")
+                st.caption(result["authors"])
+            with c3:
+                if result.get("work_key") in existing_keys:
+                    st.caption("✨ Na estante")
+                else:
+                    with st.form(f"add_author_{idx}"):
+                        add = st.form_submit_button("＋ Adicionar", type="primary", use_container_width=True)
+                    if add:
+                        try:
+                            save_book(to_book_record(result))
+                            st.session_state["notice"] = ("success", f"“{result['title']}” adicionado à estante!")
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(f"Erro ao adicionar: {exc}")
+
+# ============================================================
+# 5. ESTANTES
+# ============================================================
+elif page == "Estantes":
+    st.title("📁 Gerenciar Estantes")
+    st.write("Crie categorias personalizadas para organizar sua coleção.")
+    
+    col_input, col_btn = st.columns([4, 1])
+    with col_input:
+        new_folder_name = st.text_input("Nome da nova estante", placeholder="Ex.: Clássicos, Favoritos, Romance", key="new_folder_name_input")
+    with col_btn:
+        st.write("") 
+        st.write("")
+        create_clicked = st.button("✨ Criar estante", type="primary", use_container_width=True)
+        
+    if create_clicked:
+        if not new_folder_name.strip():
+            st.warning("Digite um nome para a estante.")
+        elif any(f["name"].casefold() == new_folder_name.strip().casefold() for f in folders):
+            st.warning("Já existe uma estante com esse nome.")
+        else:
+            try:
+                create_folder(new_folder_name)
+                st.session_state["notice"] = ("success", "Estante criada com sucesso!")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Erro ao criar estante: {exc}")
+
+    st.divider()
+
+    if folders:
+        st.subheader("Suas estantes criadas")
+        for folder in folders:
+            fid = str(folder["id"])
+            with st.container(border=True):
+                books_in_folder = sum(1 for b in books if str(b.get("folder_id") or "") == fid)
+                col1, col2, col3 = st.columns([3, 2, 1])
+                with col1:
+                    st.markdown(f"### 📁 {folder['name']}")
+                    st.caption(f"{books_in_folder} livro(s) nesta estante")
+                with col2:
+                    with st.form(f"rename_folder_{fid}"):
+                        renamed = st.text_input("Renomear estante", value=folder["name"], key=f"rename_name_{fid}")
+                        rename = st.form_submit_button("Salvar nome")
+                    if rename:
+                        if not renamed.strip():
+                            st.warning("O nome não pode ficar vazio.")
+                        elif any(f["id"] != folder["id"] and f["name"].casefold() == renamed.strip().casefold() for f in folders):
+                            st.warning("Já existe uma estante com esse nome.")
+                        else:
+                            try:
+                                rename_folder(fid, renamed)
+                                st.session_state["notice"] = ("success", "Estante renomeada.")
+                                st.rerun()
+                            except Exception as exc:
+                                st.error(f"Erro ao renomear: {exc}")
+                with col3:
+                    if st.button("🗑️ Excluir", key=f"del_folder_{fid}"):
+                        st.session_state[f"confirm_folder_{fid}"] = True
+                    if st.session_state.get(f"confirm_folder_{fid}"):
+                        st.warning("Excluir estante?")
+                        if st.button("Confirmar", key=f"confirm_del_folder_{fid}"):
+                            try:
+                                delete_folder(fid)
+                                st.session_state["notice"] = ("success", "Estante excluída. Os livros foram preservados.")
+                                st.rerun()
+                            except Exception as exc:
+                                st.error(f"Erro ao excluir: {exc}")
+    else:
+        st.info("Você ainda não criou nenhuma estante. Digite o nome no campo acima e clique em 'Criar estante'.")
