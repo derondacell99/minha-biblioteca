@@ -584,4 +584,326 @@ elif page == "Coleção":
     folder_index = list(folder_options.keys()).index(active_folder_name)
 
     with st.expander("⚙️ Filtros avançados e ordenação", expanded=False):
-        f1, f2,
+        f1, f2, f3 = st.columns(3)
+        with f1:
+            status_filter = st.multiselect("Status de leitura", statuses, default=[])
+        with f2:
+            genre_filter = st.multiselect("Gêneros", all_genres, default=[])
+            author_filter = st.multiselect("Autores", all_authors, default=[])
+        with f3:
+            folder_choice = st.selectbox(
+                "Estante", 
+                list(folder_options.keys()), 
+                index=folder_index,
+                key="collection_folder_selectbox"
+            )
+            sort_by = st.selectbox("Ordenar por", ["Mais recentes", "Título A–Z", "Melhor avaliação", "Ano de publicação"])
+
+    st.session_state["active_folder_filter"] = folder_choice
+
+    filtered = []
+    for b in books:
+        b_genres = b.get("genres") or []
+        combined_text = f"{b.get('title', '')} {b.get('authors', '')} {b.get('publisher', '')} {b.get('isbn', '')}"
+        if query.strip() and query.strip().casefold() not in combined_text.casefold():
+            continue
+        if status_filter and b.get("status") not in status_filter:
+            continue
+        if genre_filter and not set(genre_filter).intersection(set(b_genres)):
+            continue
+        if author_filter and b.get("authors", "") not in author_filter:
+            continue
+        if folder_choice != "Todas as estantes" and str(b.get("folder_id") or "") != folder_options[folder_choice]:
+            continue
+        filtered.append(b)
+
+    if sort_by == "Título A–Z":
+        filtered.sort(key=lambda b: b.get("title", "").casefold())
+    elif sort_by == "Melhor avaliação":
+        filtered.sort(key=lambda b: int(b.get("rating") or 0), reverse=True)
+    elif sort_by == "Ano de publicação":
+        filtered.sort(key=lambda b: b.get("first_publish_year") or 999999)
+
+    if not filtered:
+        st.info("Nenhum livro encontrado nesta estante ou com os filtros selecionados.")
+    else:
+        for idx, book in enumerate(filtered):
+            book_id = str(book["id"])
+            with st.container(border=True):
+                c_img, c_info, c_edit = st.columns([1, 4, 2])
+                with c_img:
+                    if book.get("cover_url"):
+                        st.image(book["cover_url"], width=90)
+                    else:
+                        st.caption("📖 Sem capa")
+                with c_info:
+                    st.markdown(f"### {book.get('title', 'Sem título')}")
+                    st.caption(f"✍️ **Autor:** {book.get('authors', 'Desconhecido')}")
+                    if book.get("publisher"):
+                        st.caption(f"🏢 **Editora:** {book.get('publisher')}")
+                    st.caption(f"📌 **Status:** {book.get('status', 'Quero ler')}")
+                    
+                    rating_val = int(book.get("rating") or 0)
+                    if rating_val > 0:
+                        st.caption(f"⭐ **Avaliação:** {'⭐' * rating_val}")
+                    else:
+                        st.caption("⭐ **Avaliação:** Sem nota")
+                        
+                    current_fid = str(book.get("folder_id") or "")
+                    folder_name = folder_map.get(current_fid, "Sem estante")
+                    st.caption(f"📁 **Estante:** {folder_name}")
+                    
+                    if book.get("personal_note"):
+                        st.caption(f"💬 *Nota:* {book.get('personal_note')}")
+                        
+                with c_edit:
+                    with st.expander("✏️ Editar"):
+                        with st.form(f"edit_{book_id}"):
+                            status = st.selectbox(
+                                "Status",
+                                statuses,
+                                index=statuses.index(book.get("status", "Quero ler"))
+                                if book.get("status", "Quero ler") in statuses else 0,
+                                key=f"status_{book_id}",
+                            )
+                            rating = st.select_slider(
+                                "Avaliação",
+                                options=[0, 1, 2, 3, 4, 5],
+                                value=int(book.get("rating") or 0),
+                                format_func=lambda x: "Sem nota" if x == 0 else "⭐" * x,
+                                key=f"rating_{book_id}",
+                            )
+                            folder_names = ["Sem estante"] + [f["name"] for f in folders]
+                            folder_ids = [""] + [str(f["id"]) for f in folders]
+                            folder_index_edit = folder_ids.index(current_fid) if current_fid in folder_ids else 0
+                            chosen_folder_name = st.selectbox(
+                                "Estante",
+                                folder_names,
+                                index=folder_index_edit,
+                                key=f"folder_{book_id}",
+                            )
+                            publisher = st.text_input("Editora", value=book.get("publisher") or "", key=f"publisher_{book_id}")
+                            personal_note = st.text_area("Nota pessoal", value=book.get("personal_note") or "", key=f"note_{book_id}")
+                            
+                            save = st.form_submit_button("Salvar alterações", type="primary", use_container_width=True)
+                        if save:
+                            try:
+                                save_book({
+                                    "status": status,
+                                    "rating": rating,
+                                    "folder_id": next((f["id"] for f in folders if f["name"] == chosen_folder_name), None),
+                                    "publisher": publisher.strip(),
+                                    "personal_note": personal_note.strip(),
+                                }, existing_id=book_id)
+                                st.session_state["notice"] = ("success", "Livro atualizado com sucesso!")
+                                st.rerun()
+                            except Exception as exc:
+                                st.error(f"Erro ao salvar: {exc}")
+                        
+                        if st.button("🗑️ Excluir livro", key=f"delete_{book_id}", use_container_width=True):
+                            st.session_state[f"confirm_delete_{book_id}"] = True
+                        if st.session_state.get(f"confirm_delete_{book_id}"):
+                            st.warning("Tem certeza?")
+                            yes, no = st.columns(2)
+                            if yes.button("Sim", key=f"yes_delete_{book_id}"):
+                                delete_book(book_id)
+                                st.session_state["notice"] = ("success", "Livro excluído.")
+                                st.rerun()
+                            if no.button("Não", key=f"no_delete_{book_id}"):
+                                st.session_state[f"confirm_delete_{book_id}"] = False
+                                st.rerun()
+
+# ============================================================
+# 3. DESCOBRIR LIVROS
+# ============================================================
+elif page == "Descobrir":
+    st.title("🔍 Descobrir Livros")
+    st.write("Pesquise no catálogo global para encontrar seus próximos livros.")
+    
+    term = st.text_input("O que você quer encontrar?", placeholder="Ex.: O Pequeno Príncipe, Colleen Hoover, fantasia", key="search_books_input")
+    do_search = st.button("Buscar livros", type="primary", key="btn_search_books")
+    
+    if do_search:
+        if not term.strip():
+            st.warning("Digite um termo para a busca.")
+        else:
+            try:
+                with st.spinner("Consultando catálogos globais..."):
+                    st.session_state["search_results"] = search_combined_catalogs(term.strip())
+                if not st.session_state["search_results"]:
+                    st.info("Não encontrei resultados. Tente outro termo.")
+            except Exception:
+                st.error("Ocorreu um imprevisto na busca. Tente novamente.")
+
+    existing_keys = {b.get("work_key") for b in books}
+    for idx, result in enumerate(st.session_state.get("search_results", [])):
+        with st.container(border=True):
+            c1, c2, c3 = st.columns([1, 5, 1])
+            with c1:
+                if result.get("cover_url"):
+                    st.image(result["cover_url"], width=80)
+                else:
+                    st.caption("Sem capa")
+            with c2:
+                st.markdown(f"**{result['title']}**")
+                st.caption(result["authors"])
+                meta = []
+                if result.get("first_publish_year"):
+                    meta.append(f"Ano: {result['first_publish_year']}")
+                if result.get("publisher"):
+                    meta.append(f"Editora: {result['publisher']}")
+                if result.get("source"):
+                    meta.append(f"Fonte: {result['source']}")
+                if meta:
+                    st.caption(" · ".join(meta))
+            with c3:
+                if result.get("work_key") in existing_keys:
+                    st.caption("✨ Na estante")
+                else:
+                    if st.button("＋ Adicionar", key=f"add_result_{idx}", type="primary", use_container_width=True):
+                        try:
+                            record = to_book_record(result)
+                            save_book(record)
+                            st.session_state["notice"] = ("success", f"“{result['title']}” adicionado à estante!")
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(f"Erro ao adicionar: {exc}")
+
+# ============================================================
+# 4. BUSCAR POR AUTOR
+# ============================================================
+elif page == "Autores":
+    st.title("✍️ Buscar por Autor")
+    st.write("Explore obras catalogadas de um autor específico.")
+    
+    author_query = st.text_input("Nome do autor", placeholder="Ex.: Charlotte Brontë", key="search_author_input")
+    author_submit = st.button("Buscar obras do autor", type="primary", key="btn_search_author")
+    
+    if author_submit:
+        if not author_query.strip():
+            st.warning("Digite o nome de um autor.")
+        else:
+            try:
+                with st.spinner("Procurando autor e obras..."):
+                    results, resolved_name = search_author_works(author_query.strip())
+                    st.session_state["author_results"] = results
+                    st.session_state["resolved_author"] = resolved_name
+                if not results:
+                    st.info("Não encontrei obras para esse autor.")
+            except Exception:
+                st.error("Não foi possível carregar as obras agora. Tente novamente.")
+    
+    resolved = st.session_state.get("resolved_author")
+    if resolved:
+        st.subheader(f"Obras de: {resolved}")
+        st.caption(f"{len(st.session_state.get('author_results', []))} resultado(s).")
+    
+    existing_keys = {b.get("work_key") for b in books}
+    for idx, result in enumerate(st.session_state.get("author_results", [])):
+        with st.container(border=True):
+            c1, c2, c3 = st.columns([1, 5, 1])
+            with c1:
+                if result.get("cover_url"):
+                    st.image(result["cover_url"], width=70)
+                else:
+                    st.caption("Sem capa")
+            with c2:
+                st.markdown(f"**{result['title']}**")
+                st.caption(result["authors"])
+            with c3:
+                if result.get("work_key") in existing_keys:
+                    st.caption("✨ Na estante")
+                else:
+                    if st.button("＋ Adicionar", key=f"add_author_{idx}", type="primary", use_container_width=True):
+                        try:
+                            save_book(to_book_record(result))
+                            st.session_state["notice"] = ("success", f"“{result['title']}” adicionado à estante!")
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(f"Erro ao adicionar: {exc}")
+
+# ============================================================
+# 5. ESTANTES
+# ============================================================
+elif page == "Estantes":
+    st.title("📁 Gerenciar Estantes Navegáveis")
+    st.write("Crie e visualize suas estantes temáticas lado a lado com capa personalizada.")
+    
+    with st.expander("✨ Criar nova estante", expanded=True):
+        new_name = st.text_input("Nome da estante", placeholder="Ex.: Clássicos, Favoritos, Romance", key="new_folder_name_field")
+        new_cover_file = st.file_uploader("Capa da estante (opcional)", type=["png", "jpg", "jpeg", "webp"], key="new_folder_cover_uploader")
+        create_clicked = st.button("Criar estante", type="primary", key="btn_create_folder")
+            
+        if create_clicked:
+            if not new_name.strip():
+                st.warning("Digite um nome para a estante.")
+            elif any(f["name"].casefold() == new_name.strip().casefold() for f in folders):
+                st.warning("Já existe uma estante com esse nome.")
+            else:
+                try:
+                    cover_base64 = ""
+                    if new_cover_file is not None:
+                        cover_base64 = image_to_base64(new_cover_file)
+                    create_folder(new_name, cover_base64)
+                    st.session_state["notice"] = ("success", "Estante criada com sucesso!")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Erro ao criar estante: {exc}")
+
+    st.divider()
+
+    if folders:
+        st.subheader("Suas Estantes")
+        cols = st.columns(3)
+        for idx, folder in enumerate(folders):
+            fid = str(folder["id"])
+            books_in_folder = [b for b in books if str(b.get("folder_id") or "") == fid]
+            
+            with cols[idx % 3]:
+                with st.container(border=True):
+                    cover_data = folder.get("cover_data")
+                    if cover_data:
+                        st.image(cover_data, width=110)
+                    else:
+                        st.markdown("### 🌸 📁")
+                        
+                    st.markdown(f"**{folder['name']}**")
+                    st.caption(f"{len(books_in_folder)} livro(s)")
+                    
+                    if st.button("📂 Ver livros", key=f"view_folder_{fid}", use_container_width=True):
+                        st.session_state["active_folder_filter"] = folder["name"]
+                        st.session_state["page"] = "Coleção"
+                        st.rerun()
+                        
+                    with st.expander("⚙️ Editar / Gerenciar"):
+                        with st.form(f"edit_folder_{fid}"):
+                            renamed = st.text_input("Nome", value=folder["name"], key=f"rename_name_{fid}")
+                            new_shelf_cover = st.file_uploader("Nova capa", type=["png", "jpg", "jpeg", "webp"], key=f"file_shelf_{fid}")
+                            save_folder_btn = st.form_submit_button("Salvar", type="primary", use_container_width=True)
+                            
+                        if save_folder_btn:
+                            if not renamed.strip():
+                                st.warning("O nome não pode ficar vazio.")
+                            else:
+                                try:
+                                    updated_cover = image_to_base64(new_shelf_cover) if new_shelf_cover else None
+                                    update_folder(fid, renamed, updated_cover)
+                                    st.session_state["notice"] = ("success", "Estante atualizada!")
+                                    st.rerun()
+                                except Exception as exc:
+                                    st.error(f"Erro ao atualizar: {exc}")
+                                    
+                        if st.button("🗑️ Excluir estante", key=f"del_folder_{fid}", use_container_width=True):
+                            st.session_state[f"confirm_folder_{fid}"] = True
+                        if st.session_state.get(f"confirm_folder_{fid}"):
+                            st.warning("Excluir estante?")
+                            yes, no = st.columns(2)
+                            if yes.button("Sim", key=f"confirm_del_{fid}"):
+                                delete_folder(fid)
+                                st.session_state["notice"] = ("success", "Estante excluída. Livros mantidos.")
+                                st.rerun()
+                            if no.button("Não", key=f"cancel_del_{fid}"):
+                                st.session_state[f"confirm_folder_{fid}"] = False
+                                st.rerun()
+    else:
+        st.info("Você ainda não criou nenhuma estante. Use o campo acima para criar sua primeira estante.")
