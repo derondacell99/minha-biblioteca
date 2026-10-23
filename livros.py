@@ -100,6 +100,7 @@ def init_session():
         "auth_email": "",
         "search_results": [],
         "author_results": [],
+        "resolved_author": None,
         "notice": None,
         "page": "Início",
     }
@@ -136,6 +137,7 @@ def sign_out():
     st.session_state["refresh_token"] = None
     st.session_state["search_results"] = []
     st.session_state["author_results"] = []
+    st.session_state["resolved_author"] = None
     st.rerun()
 
 # ============================================================
