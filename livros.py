@@ -6,6 +6,7 @@ from typing import Any
 import requests
 import streamlit as st
 from supabase import create_client, Client
+import extra_streamlit_components as stx
 
 # ============================================================
 # CONFIGURAÇÃO E ESTÉTICA PINK AESTHETIC & LILÁS
@@ -35,7 +36,6 @@ st.markdown(
     [data-testid="stSidebar"] { background-color: #F8EDF8; border-right: 1px solid var(--border-color); }
     h1, h2, h3 { color: #5D3B62; font-family: sans-serif; }
     
-    /* Cartões / Containers */
     div[data-testid="stVerticalBlockBorderWrapper"] {
         background-color: var(--paper-bg);
         border: 1px solid var(--border-color);
@@ -47,7 +47,6 @@ st.markdown(
         box-shadow: 0 6px 20px rgba(255, 198, 255, 0.5);
     }
     
-    /* Botões personalizados */
     div.stButton > button[kind="primary"] {
         background-color: #E2D1F9;
         border-color: #E2D1F9;
@@ -80,8 +79,14 @@ GOOGLE_BOOKS_API = "https://www.googleapis.com/books/v1/volumes"
 HEADERS = {"User-Agent": "MinhaEstantePessoal/1.0 (personal-library-app)"}
 
 # ============================================================
-# SUPABASE & SESSÃO
+# GERENCIADOR DE COOKIES & SUPABASE
 # ============================================================
+@st.cache_resource
+def get_cookie_manager():
+    return stx.CookieManager()
+
+cookie_manager = get_cookie_manager()
+
 def get_supabase() -> Client | None:
     try:
         url = st.secrets["SUPABASE_URL"]
@@ -113,26 +118,19 @@ def init_session():
 
 init_session()
 
-# Restaura a sessão existente para evitar logins repetidos
-if supabase and st.session_state.get("user") is None:
-    try:
-        session = supabase.auth.get_session()
-        if session and session.user:
-            st.session_state["user"] = session.user
-            st.session_state["access_token"] = session.access_token
-            st.session_state["refresh_token"] = session.refresh_token
-            st.session_state["auth_email"] = session.user.email or ""
-    except Exception:
-        pass
-
-if supabase and st.session_state.get("access_token") and st.session_state.get("refresh_token"):
-    try:
-        supabase.auth.set_session(
-            st.session_state["access_token"],
-            st.session_state["refresh_token"]
-        )
-    except Exception:
-        pass
+if supabase and st.session_state["user"] is None:
+    saved_access = cookie_manager.get("sb_access_token")
+    saved_refresh = cookie_manager.get("sb_refresh_token")
+    if saved_access and saved_refresh:
+        try:
+            res = supabase.auth.set_session(saved_access, saved_refresh)
+            if res and res.user:
+                st.session_state["user"] = res.user
+                st.session_state["access_token"] = saved_access
+                st.session_state["refresh_token"] = saved_refresh
+                st.session_state["auth_email"] = res.user.email or ""
+        except Exception:
+            pass
 
 def show_notice():
     notice = st.session_state.get("notice")
@@ -152,6 +150,8 @@ def sign_out():
             supabase.auth.sign_out()
     except Exception:
         pass
+    cookie_manager.delete("sb_access_token")
+    cookie_manager.delete("sb_refresh_token")
     st.session_state["user"] = None
     st.session_state["access_token"] = None
     st.session_state["refresh_token"] = None
@@ -187,6 +187,9 @@ def auth_screen():
                     st.session_state["access_token"] = result.session.access_token
                     st.session_state["refresh_token"] = result.session.refresh_token
                     st.session_state["auth_email"] = email.strip()
+                    
+                    cookie_manager.set("sb_access_token", result.session.access_token, key="set_acc", max_age=30*24*3600)
+                    cookie_manager.set("sb_refresh_token", result.session.refresh_token, key="set_ref", max_age=30*24*3600)
                     st.rerun()
                 except Exception:
                     st.error("Não foi possível entrar. Confira seus dados.")
@@ -212,6 +215,9 @@ def auth_screen():
                         st.session_state["access_token"] = result.session.access_token
                         st.session_state["refresh_token"] = result.session.refresh_token
                         st.session_state["auth_email"] = email_new.strip()
+                        
+                        cookie_manager.set("sb_access_token", result.session.access_token, key="set_acc_sup", max_age=30*24*3600)
+                        cookie_manager.set("sb_refresh_token", result.session.refresh_token, key="set_ref_sup", max_age=30*24*3600)
                         st.rerun()
                     else:
                         st.success("Conta criada com sucesso! Faça login na aba ao lado.")
@@ -275,7 +281,7 @@ def image_to_base64(uploaded_file) -> str:
     return f"data:{mime};base64," + base64.b64encode(raw).decode("utf-8")
 
 # ============================================================
-# BUSCA INTELIGENTE HÍBRIDA (Google Books + Open Library)
+# BUSCA HÍBRIDA EXPANDIDA (Sem restrições de limites curtos)
 # ============================================================
 def normalize_text(value: Any, fallback: str = "") -> str:
     if isinstance(value, list):
@@ -284,12 +290,12 @@ def normalize_text(value: Any, fallback: str = "") -> str:
         return fallback
     return str(value)
 
-def search_google_books(term: str, limit: int = 10) -> list[dict[str, Any]]:
+def search_google_books(term: str, limit: int = 40) -> list[dict[str, Any]]:
     try:
         response = requests.get(
             GOOGLE_BOOKS_API,
             params={"q": term, "maxResults": limit},
-            timeout=10,
+            timeout=12,
         )
         response.raise_for_status()
         data = response.json()
@@ -327,7 +333,7 @@ def search_google_books(term: str, limit: int = 10) -> list[dict[str, Any]]:
     except Exception:
         return []
 
-def search_openlibrary(term: str, limit: int = 10) -> list[dict[str, Any]]:
+def search_openlibrary(term: str, limit: int = 40) -> list[dict[str, Any]]:
     try:
         response = requests.get(
             OPENLIBRARY_SEARCH,
@@ -337,7 +343,7 @@ def search_openlibrary(term: str, limit: int = 10) -> list[dict[str, Any]]:
                 "fields": "key,title,author_name,first_publish_year,cover_i,subject,language,isbn,publisher,edition_count",
             },
             headers=HEADERS,
-            timeout=12,
+            timeout=15,
         )
         response.raise_for_status()
         data = response.json()
@@ -362,16 +368,13 @@ def search_openlibrary(term: str, limit: int = 10) -> list[dict[str, Any]]:
     except Exception:
         return []
 
-def search_combined_catalogs(term: str, limit: int = 20) -> list[dict[str, Any]]:
-    # Busca segura combinando Google Books e Open Library
-    gb_results = search_google_books(term, limit=limit // 2)
-    ol_results = search_openlibrary(term, limit=limit // 2)
-    
-    # Prioriza Google Books (ótimo para pt-BR), complementando com Open Library
-    combined = gb_results + ol_results
-    return combined
+def search_combined_catalogs(term: str) -> list[dict[str, Any]]:
+    # Busca máxima em ambos os servidores simultaneamente
+    gb_results = search_google_books(term, limit=40)
+    ol_results = search_openlibrary(term, limit=40)
+    return gb_results + ol_results
 
-def search_author_works(author_name: str, limit: int = 100) -> tuple[list[dict[str, Any]], str | None]:
+def search_author_works(author_name: str) -> tuple[list[dict[str, Any]], str | None]:
     try:
         response = requests.get(
             OPENLIBRARY_AUTHOR,
@@ -394,7 +397,7 @@ def search_author_works(author_name: str, limit: int = 100) -> tuple[list[dict[s
 
         works_response = requests.get(
             f"https://openlibrary.org{author_key}/works.json",
-            params={"limit": limit},
+            params={"limit": 100},
             headers=HEADERS,
             timeout=20,
         )
@@ -440,7 +443,7 @@ def get_work_description(work_key: str) -> str:
         pass
     return ""
 
-def to_book_record(result: dict[str, Any]) -> str:
+def to_book_record(result: dict[str, Any]) -> dict[str, Any]:
     return {
         "title": result["title"],
         "authors": result["authors"],
@@ -716,22 +719,21 @@ elif page == "Coleção":
                                 st.rerun()
 
 # ============================================================
-# 3. DESCOBRIR LIVROS (Google Books + Open Library combinados)
+# 3. DESCOBRIR LIVROS (Sem limitações de quantidade)
 # ============================================================
 elif page == "Descobrir":
     st.title("🔍 Descobrir Livros")
-    st.write("Pesquise simultaneamente no Google Books e na Open Library para encontrar seus próximos livros.")
+    st.write("Pesquise no catálogo global para encontrar seus próximos livros.")
     with st.form("search_books_form"):
         term = st.text_input("O que você quer encontrar?", placeholder="Ex.: O Pequeno Príncipe, Colleen Hoover, fantasia")
-        limit = st.selectbox("Quantidade de resultados", [10, 20, 40], index=1)
-        do_search = st.form_submit_button("Buscar em ambas as bases", type="primary")
+        do_search = st.form_submit_button("Buscar livros", type="primary")
     if do_search:
         if not term.strip():
             st.warning("Digite um termo para a busca.")
         else:
             try:
-                with st.spinner("Consultando catálogos globais (Google Books & Open Library)..."):
-                    st.session_state["search_results"] = search_combined_catalogs(term.strip(), limit)
+                with st.spinner("Consultando catálogos globais..."):
+                    st.session_state["search_results"] = search_combined_catalogs(term.strip())
                 if not st.session_state["search_results"]:
                     st.info("Não encontrei resultados. Tente outro termo.")
             except Exception:
@@ -781,15 +783,14 @@ elif page == "Autores":
     st.write("Explore obras catalogadas de um autor específico.")
     with st.form("author_search_form"):
         author_query = st.text_input("Nome do autor", placeholder="Ex.: Charlotte Brontë")
-        author_limit = st.selectbox("Máximo de obras", [25, 50, 100], index=2)
-        author_submit = st.form_submit_button("Buscar obras", type="primary")
+        author_submit = st.form_submit_button("Buscar obras do autor", type="primary")
     if author_submit:
         if not author_query.strip():
             st.warning("Digite o nome de um autor.")
         else:
             try:
                 with st.spinner("Procurando autor e obras..."):
-                    results, resolved_name = search_author_works(author_query.strip(), author_limit)
+                    results, resolved_name = search_author_works(author_query.strip())
                     st.session_state["author_results"] = results
                     st.session_state["resolved_author"] = resolved_name
                 if not results:
